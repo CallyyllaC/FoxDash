@@ -1,6 +1,6 @@
 {
   "name": "FoxDash",
-  "summary": "A Raspberry Pi vehicle dashboard built around the PSA SID807 ECU, with desktop replay tooling for development away from the car.",
+  "summary": "A Pi Zero 2-powered vehicle computer for monitoring deeper engine data, real-time mechanical strain, and driving economy.",
   "status": "active",
   "type": "software-hardware",
   "tags": [
