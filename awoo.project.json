@@ -4,11 +4,12 @@
   "status": "active",
   "type": "software-hardware",
   "tags": [
-  "Python",
-  "Raspberry Pi",
-  "SID807",
-  "Automotive",
-  "3D Printing"
-],
-  "image": "images/simulator/cruising.png"
+    "Python",
+    "Raspberry Pi",
+    "SID807",
+    "Automotive",
+    "3D Printing"
+  ],
+  "image": "images/awoo-card.png",
+  "content": "docs/awoo.md"
 }
