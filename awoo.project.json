@@ -1,0 +1,14 @@
+{
+  "name": "FoxDash",
+  "summary": "A Raspberry Pi vehicle dashboard built around the PSA SID807 ECU, with desktop replay tooling for development away from the car.",
+  "status": "active",
+  "type": "software-hardware",
+  "tags": [
+  "Python",
+  "Raspberry Pi",
+  "SID807",
+  "Automotive",
+  "3D Printing"
+],
+  "image": "images/simulator/cruising.png"
+}

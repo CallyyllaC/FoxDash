@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=FoxDash
+Comment=Show FoxDash on boot
+Exec=bash -lc 'exec "$HOME/FoxDash/deploy/raspberry-pi/run_dashboard_visible.sh"'
+Terminal=false
+X-GNOME-Autostart-enabled=true

@@ -1,0 +1,183 @@
+/* -------------------------------------------------------------------------
+   FoxDash visual language: bright cyan/fuchsia edge lighting over very
+   dark, panel-specific tints.  This is deliberately terminal-native rather
+   than attempting fake web UI effects in a grid of character cells.
+   ------------------------------------------------------------------------- */
+
+Screen {
+    background: #03050a;
+    color: #eefbff;
+}
+
+#status_bar {
+    height: 1;
+    padding: 0 1;
+    content-align: right middle;
+    background: #07101a;
+    color: #eefbff;
+}
+
+/* One current driving verdict, visually distinct from the cards. */
+#feedback_bar {
+    /* A compact command banner, not text wedged between status and cards. */
+    height: 2;
+    margin: 1 1 1 1;
+    padding: 0 2;
+    content-align: center middle;
+    background: #08121c;
+    color: #eefbff;
+}
+
+#feedback_bar.feedback-good {
+    border-left: heavy #22dbff;
+    background: #07131a;
+}
+
+#feedback_bar.feedback-caution {
+    border-left: heavy #ffb000;
+    background: #171207;
+}
+
+#feedback_bar.feedback-alert {
+    border-left: heavy #ff3b30;
+    background: #19090d;
+}
+
+/* The DPF footer deliberately keeps its own thermal language. The live app
+   interpolates its edge/tint colours in Python; these are safe fallback styles
+   for first paint and non-live previews. */
+#dpf_bar {
+    height: 3;
+    margin: 0 1;
+    padding: 0 1;
+    border: round #66717c;
+    background: #0a1017;
+    color: #eefbff;
+}
+
+#score_row {
+    height: 7;
+}
+
+.score-card {
+    width: 1fr;
+    height: 100%;
+    margin: 0 1;
+    padding: 0 2;
+    border: round #54606f;
+    color: #eefbff;
+    border-title-align: right;
+    border-title-style: bold;
+}
+
+#efficiency_card {
+    border: round #22dbff;
+    background: #081923;
+    border-title-color: #22dbff;
+    border-title-background: #081923;
+}
+
+#mood_card {
+    border: round #f04cff;
+    background: #1b0b20;
+    border-title-color: #f04cff;
+    border-title-background: #1b0b20;
+}
+
+#mid_row {
+    height: 7;
+}
+
+#bottom_row {
+    height: 6;
+}
+
+/* Data cards get a tinted interior and their title is physically cut into the
+   border instead of spending a content row. */
+.data-card {
+    width: 1fr;
+    height: 100%;
+    margin: 0 1;
+    padding: 0 1;
+    border: round #4f5a68;
+    color: #eefbff;
+    border-title-align: left;
+    border-title-style: bold;
+}
+
+#driver_card {
+    border: round #dce8f2;
+    background: #10121a;
+    border-title-color: #eefbff;
+    border-title-background: #10121a;
+}
+
+#thermal_system_card {
+    border: round #22dbff;
+    background: #081a23;
+    border-title-color: #22dbff;
+    border-title-background: #081a23;
+}
+
+#pressure_card {
+    border: round #f04cff;
+    background: #1b0b20;
+    border-title-color: #f04cff;
+    border-title-background: #1b0b20;
+}
+
+#flow_card {
+    border: round #f04cff;
+    background: #1b0b20;
+    border-title-color: #f04cff;
+    border-title-background: #1b0b20;
+}
+
+/* Red remains rare. A red-tinted interior and a bright outline are reserved
+   for actual red-class conditions, not ordinary amber guidance. */
+.score-card.card-alert,
+.data-card.card-alert {
+    border: round #ff3b30;
+    background: #1c090d;
+    border-title-color: #ff5a52;
+    border-title-background: #1c090d;
+}
+
+.debug-card {
+    height: 12;
+    margin: 0 1;
+    padding: 0 1;
+    border: round #ffb000;
+    background: #1a1406;
+    border-title-color: #ffb000;
+    border-title-background: #1a1406;
+    border-title-style: bold;
+}
+
+.hidden {
+    display: none;
+}
+
+.relaxed #score_row {
+    height: 8;
+}
+
+.relaxed #mid_row {
+    height: 8;
+}
+
+.relaxed #bottom_row {
+    height: 7;
+}
+
+/* Sparse texture test. The DitherCard renderable paints beneath the content
+   child, so values and borders remain clean. */
+DitherCard {
+    overflow: hidden;
+}
+
+.card-content {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+}

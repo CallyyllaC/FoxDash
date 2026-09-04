@@ -1,0 +1,203 @@
+{
+  "efficiency": {
+    "labels": {
+      "OPTIMAL": "Dialed In",
+      "EFFICIENT": "Well Behaved",
+      "STEADY": "Stable",
+      "INEFFICIENT": "Slipping",
+      "POOR": "Wasteful",
+      "LUGGING": "Lugging",
+      "THERMAL": "Thermal",
+      "DPF PRESS": "DPF Delta",
+      "LOW VOLT": "Low Power",
+      "UNKNOWN": "Unknown"
+    },
+    "badges": {
+      "OPTIMAL": [
+        "Dialed",
+        "In",
+        ""
+      ],
+      "EFFICIENT": [
+        "Well",
+        "Behaved",
+        ""
+      ],
+      "STEADY": [
+        "Stable",
+        "",
+        ""
+      ],
+      "INEFFICIENT": [
+        "Slipping",
+        "",
+        ""
+      ],
+      "POOR": [
+        "Wasteful",
+        "",
+        ""
+      ],
+      "LUGGING": [
+        "Lugging",
+        "",
+        ""
+      ],
+      "THERMAL": [
+        "Thermal",
+        "",
+        ""
+      ],
+      "DPF PRESS": [
+        "DPF",
+        "Delta",
+        ""
+      ],
+      "LOW VOLT": [
+        "Low",
+        "Power",
+        ""
+      ],
+      "UNKNOWN": [
+        "Unknown",
+        "",
+        ""
+      ]
+    }
+  },
+  "mood": {
+    "states": {
+      "happy": {
+        "face": ":D",
+        "label": "Pleased",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502^_^\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "smug": {
+        "face": ":)",
+        "label": "Smug",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502^~^\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "fine": {
+        "face": ":|",
+        "label": "Fine",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502-_-\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "grumbling": {
+        "face": ":/",
+        "label": "\"Fine\"",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502._.\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "strained": {
+        "face": ">:/",
+        "label": "Grumbling",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502>_<\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "sulking": {
+        "face": ":(",
+        "label": "Sulking",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502._.\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "upset": {
+        "face": ":'(",
+        "label": "Upset",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502T_T\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "lugging": {
+        "face": ">:O",
+        "label": "Lugging",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502O_O\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "hot": {
+        "face": "!!",
+        "label": "Hot",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502!_!\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "low volts": {
+        "face": "!!",
+        "label": "Low volts",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502x_x\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "reconnecting": {
+        "face": ":/",
+        "label": "Reconnecting",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502?_?\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "no OBD": {
+        "face": ":(",
+        "label": "No OBD",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502x_x\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      },
+      "unknown": {
+        "face": ":?",
+        "label": "Waiting",
+        "art": [
+          "\u256d\u2500\u2500\u2500\u256e",
+          "\u2502?_?\u2502",
+          "\u2570\u2500\u2500\u2500\u256f"
+        ]
+      }
+    }
+  },
+  "tips": {
+    "obd_wait": "Waiting for the OBD to stop being dramatic.",
+    "low_voltage": "Charging voltage is low. The electrical system is not impressed.",
+    "thermal_hot": "Ease off. We are not turning the engine bay into a sauna.",
+    "dpf_pressure": "Careful. The DPF is breathing through a straw.",
+    "lugging": "Drop a gear. It has torque, but it is not a tractor.",
+    "cold": "Cold engine. Save the grand entrance for later.",
+    "high_rpm": "Shift up. These revs are not earning their keep.",
+    "high_pedal": "Gentler. The pedal is not a grievance form.",
+    "happy_path": "Hold this pace. Everything is behaving itself.",
+    "default": "Minimal drama. The car appreciates it.",
+    "coasting": "Good lift. Let momentum earn its keep.",
+    "telemetry_incomplete": "Waiting for complete driving telemetry."
+  }
+}
