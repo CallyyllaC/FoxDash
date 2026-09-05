@@ -15,11 +15,13 @@ from typing import Any, Iterable, Iterator, TextIO
 from . import __version__
 from .log_format import status_schema
 from .psa_protocol import change_field_schema
+from .session_identity import session_sequence_from_id
 
 
 MANIFEST_NAME = "manifest.json"
-MANIFEST_VERSION = 1
-_LOG_NAME = re.compile(r"^psa_.+_(?P<session>\d{8}_\d{6}(?:-[A-Za-z0-9-]+)?)\.(?:csv|txt|log|json)$")
+MANIFEST_VERSION = 2
+_SESSION_TOKEN = r"(?:\d{8}_\d{6}(?:-[A-Za-z0-9-]+)?|S\d{8}-\d{8}_\d{6}-[A-Za-z0-9-]+)"
+_LOG_NAME = re.compile(rf"^psa_.+_(?P<session>{_SESSION_TOKEN})\.(?:csv|txt|log|json)$")
 _HEADER_PREFIXES: dict[str, tuple[str, ...]] = {
     "psa_raw_blocks_": ("timestamp", "sample", "phase"),
     "psa_connection_attempts_": ("timestamp", "attempt", "port"),
@@ -98,6 +100,13 @@ def _read_session_identity(path: Path, fallback: str) -> tuple[str, str, str]:
     return session_id, boot_id, started_at
 
 
+def _journey_sort_key(journey: JourneyFiles) -> tuple[int, int | str, str]:
+    sequence = session_sequence_from_id(journey.session_id)
+    if sequence is not None:
+        return (1, sequence, journey.session_id)
+    return (0, journey.session_id, journey.session_id)
+
+
 def discover_completed_journeys(
     log_dir: Path,
     active_session_id: str,
@@ -143,7 +152,7 @@ def discover_completed_journeys(
         if safe_session_id(session_id) in active_ids:
             continue
         journeys.append(JourneyFiles(safe_session_id(session_id), boot_id, started_at, tuple(sorted(files))))
-    return sorted(journeys, key=lambda item: item.session_id)
+    return sorted(journeys, key=_journey_sort_key)
 
 
 def _is_header_only_csv(path: Path) -> bool:
@@ -193,12 +202,15 @@ def _iso_from_timestamp(timestamp: float) -> str:
 
 def _manifest(journey: JourneyFiles, files: tuple[Path, ...]) -> dict[str, Any]:
     mtimes = [path.stat().st_mtime for path in files]
+    session_sequence = session_sequence_from_id(journey.session_id)
     return {
         "manifest_version": MANIFEST_VERSION,
         "session_id": journey.session_id,
+        "session_sequence": session_sequence,
         "boot_id": journey.boot_id,
         "journey_start_time": journey.started_at or (_iso_from_timestamp(min(mtimes)) if mtimes else ""),
         "journey_end_time": _iso_from_timestamp(max(mtimes)) if mtimes else "",
+        "wall_clock_authoritative": False if session_sequence is not None else None,
         "encoding": "utf-8",
         "newline": "\\n",
         "files": [{"name": path.name, "uncompressed_length": path.stat().st_size} for path in files],
