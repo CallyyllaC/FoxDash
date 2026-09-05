@@ -59,11 +59,27 @@ if [ -z "${WAYLAND_DISPLAY:-}" ]; then
     [ -n "$WAYLAND_SOCKET" ] && export WAYLAND_DISPLAY="$(basename "$WAYLAND_SOCKET")"
 fi
 
+# Fullscreen is deliberately matched by lxterminal app_id only. The terminal
+# title can change while the shell/Python/Textual stack starts, which made the
+# old exact title match a race. Reassert fullscreen several times after the
+# first successful match so a late compositor/window-state update cannot undo
+# the initial request. The loop is bounded and harmless if wlrctl never finds
+# the window.
 if command -v wlrctl >/dev/null 2>&1; then
-    for _ in $(seq 1 20); do
+    fullscreen_successes=0
+    for _ in $(seq 1 40); do
         sleep 0.25
-        wlrctl toplevel fullscreen app_id:lxterminal 'title:FoxDash' && break
+        if wlrctl toplevel fullscreen app_id:lxterminal >/dev/null 2>&1; then
+            fullscreen_successes=$((fullscreen_successes + 1))
+            if [ "$fullscreen_successes" -ge 8 ]; then
+                break
+            fi
+        fi
     done
+
+    if [ "$fullscreen_successes" -eq 0 ]; then
+        echo "$(date -Is) WARN: wlrctl could not fullscreen lxterminal during startup" >> "$RUNNER_LOG"
+    fi
 fi
 
 wait "$terminal_pid"
