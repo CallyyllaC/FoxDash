@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
 import threading
 import time
 import uuid
@@ -10,6 +9,7 @@ from pathlib import Path
 from .i2c_controller import I2cController
 from .led_app import LedApp
 from .runtime_types import ConnectionAttemptEvent, EnvironmentSnapshot, PsaPollResult
+from .session_identity import allocate_session_identity
 from .source_adapters import OfflineSweepSource, ReplaySource, SourceFrame
 from .state_store import DashboardStateStore, waiting_snapshot
 from .telemetry import TelemetrySnapshot
@@ -47,8 +47,11 @@ class FoxDashRuntime:
 
     def __init__(self, config: RuntimeConfig) -> None:
         self.config = config
-        self.session_started_at = dt.datetime.now().astimezone().isoformat(timespec="seconds")
-        self.session_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        self.logger = TelemetryLogger(config.log_dir)
+        identity = allocate_session_identity(self.logger.log_dir)
+        self.session_sequence = identity.sequence
+        self.session_started_at = identity.started_at
+        self.session_id = identity.session_id
         self.boot_id = self._boot_id()
         self.store = DashboardStateStore(source_name=config.source)
         self.engine = TelemetryEngine(
@@ -56,7 +59,6 @@ class FoxDashRuntime:
             boot_id=self.boot_id,
             session_started_at=self.session_started_at,
         )
-        self.logger = TelemetryLogger(config.log_dir)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._reader = None
