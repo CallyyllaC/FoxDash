@@ -13,7 +13,7 @@ from .runtime_types import ConnectionAttemptEvent, EnvironmentSnapshot, PsaPollR
 from .source_adapters import OfflineSweepSource, ReplaySource, SourceFrame
 from .state_store import DashboardStateStore, waiting_snapshot
 from .telemetry import TelemetrySnapshot
-from .telemetry_engine import TelemetryEngine
+from .telemetry_calibration import CalibratedTelemetryEngine
 from .telemetry_logger import TelemetryLogger
 
 
@@ -51,7 +51,7 @@ class FoxDashRuntime:
         self.session_id = dt.datetime.now().strftime("%Y%m%d_%H%M%S") + "-" + uuid.uuid4().hex[:6]
         self.boot_id = self._boot_id()
         self.store = DashboardStateStore(source_name=config.source)
-        self.engine = TelemetryEngine(
+        self.engine = CalibratedTelemetryEngine(
             session_id=self.session_id,
             boot_id=self.boot_id,
             session_started_at=self.session_started_at,
