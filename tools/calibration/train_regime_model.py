@@ -103,6 +103,7 @@ def main() -> int:
 
     try:
         import numpy as np
+        import pandas as pd
         from sklearn.cluster import KMeans
         from sklearn.metrics import silhouette_score
         from sklearn.preprocessing import RobustScaler
@@ -114,13 +115,17 @@ def main() -> int:
     if len(data) < args.clusters * 20:
         raise SystemExit(f"Only {len(data)} usable rows; insufficient for {args.clusters} regimes")
 
-    # Every journey gets a bounded number of votes.  Long motorway slogs still
+    # Every journey gets a bounded number of votes. Long motorway slogs still
     # provide tight variance, but they do not democratically annex the model.
-    balanced = (
-        data.groupby("_session", group_keys=False, sort=False)
-        .apply(lambda group: group.sample(n=min(len(group), args.max_per_session), random_state=args.seed))
-        .reset_index(drop=True)
-    )
+    # Use an explicit loop instead of GroupBy.apply so pandas 2.x/3.x disagreeing
+    # about whether the grouping column survives cannot silently change output.
+    session_count = int(data["_session"].nunique())
+    balanced_groups = []
+    for _session, group in data.groupby("_session", sort=False):
+        balanced_groups.append(
+            group.sample(n=min(len(group), args.max_per_session), random_state=args.seed)
+        )
+    balanced = pd.concat(balanced_groups, ignore_index=True)
 
     matrix = balanced[features].to_numpy(dtype=float)
     scaler = RobustScaler(quantile_range=(10.0, 90.0))
@@ -157,7 +162,7 @@ def main() -> int:
         "observation_only": True,
         "training_note": (
             f"{args.note}; usable_rows={len(data)}; balanced_rows={len(balanced)}; "
-            f"sessions={balanced['_session'].nunique()}; silhouette={silhouette:.4f}"
+            f"sessions={session_count}; silhouette={silhouette:.4f}"
         ),
         "features": features,
         "normalisation": {
@@ -171,7 +176,7 @@ def main() -> int:
     args.output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(
         f"Wrote {args.output}: {len(data)} usable rows, {len(balanced)} balanced rows, "
-        f"{balanced['_session'].nunique()} sessions, K={args.clusters}, silhouette={silhouette:.4f}"
+        f"{session_count} sessions, K={args.clusters}, silhouette={silhouette:.4f}"
     )
     print("Regime labels are intentionally generic; interpret/rename them after reviewing centroids and journey coverage.")
     return 0
