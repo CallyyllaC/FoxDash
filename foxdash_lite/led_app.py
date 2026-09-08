@@ -38,6 +38,7 @@ RED: Final[RGBW] = (255, 0, 0, 0)
 DIM_CYAN: Final[RGBW] = (0, 45, 75, 0)
 DIM_RED: Final[RGBW] = (85, 0, 0, 0)
 AMBER: Final[RGBW] = (255, 92, 0, 0)
+REGEN_MARKER: Final[RGBW] = (255, 165, 0, 0)
 
 Frame = tuple[RGBW, ...]
 FloatPixel = tuple[float, float, float, float]
@@ -132,10 +133,11 @@ class LedFrameMapper:
 
     Contract:
     - brightness = ambient light only;
-    - colour = efficiency score;
+    - colour = efficiency score, except confirmed DPF regeneration uses amber;
     - width = mood score / mechanical comfort;
     - position + marker = signed upstream guidance correction;
-    - DPF burning = the one whole-bar visual override.
+    - confirmed regeneration changes colour only. It does not erase width or
+      guidance, and inferred BURNING state is never treated as regeneration.
 
     This layer must stay deliberately dumb. It never turns RPM, pedal, reverse,
     or load into new opinions. That work belongs in ``TelemetryEngine``.
@@ -169,21 +171,25 @@ class LedFrameMapper:
             return LedRender(self._blank(), brightness, mode="off")
 
         telemetry = state.telemetry
-        if self._is_regen(telemetry):
-            return LedRender(self._regen_frame(now), brightness, mode="regen")
         if not telemetry.telemetryValid:
             return LedRender(self._status_frame(telemetry), brightness, mode="status")
 
-        frame, width, guidance = self._normal_frame(telemetry)
-        return LedRender(frame, brightness, mode="normal", band_width=width, guidance_position=guidance)
+        regen_active = self._is_regen(telemetry)
+        frame, width, guidance = self._normal_frame(telemetry, regen_active=regen_active)
+        return LedRender(
+            frame,
+            brightness,
+            mode="regen" if regen_active else "normal",
+            band_width=width,
+            guidance_position=guidance,
+        )
 
     def _blank(self) -> Frame:
         return (BLACK,) * self.led_count
 
     @staticmethod
     def _is_regen(telemetry: TelemetrySnapshot) -> bool:
-        status = (telemetry.dpfStatus or "").upper()
-        return "BURNING" in status or "REGEN" in status
+        return bool(telemetry.dpfRegenerationActive)
 
     def _status_frame(self, telemetry: TelemetrySnapshot) -> Frame:
         """A subdued incomplete/no-OBD indication, not fake score colours."""
@@ -199,7 +205,7 @@ class LedFrameMapper:
             frame.reverse()
         return tuple(frame)
 
-    def _normal_frame(self, telemetry: TelemetrySnapshot) -> tuple[Frame, float, float]:
+    def _normal_frame(self, telemetry: TelemetrySnapshot, *, regen_active: bool = False) -> tuple[Frame, float, float]:
         efficiency = _number(telemetry.efficiencyScore)
         mood = _number(telemetry.moodScore)
         guidance = _number(telemetry.guidanceCorrection)
@@ -216,8 +222,14 @@ class LedFrameMapper:
         # Preserve the whole relaxed/picky window within physical LEDs.
         centre = _clamp(centre, half_width - 0.5, (self.led_count - 1) - (half_width - 0.5))
 
-        band_colour = _palette_colour(efficiency, EFFICIENCY_PALETTE)
-        marker_colour = _palette_colour(efficiency, MARKER_PALETTE)
+        if regen_active:
+            # Regeneration is important enough to own colour, not geometry.
+            # Mood width and guidance position remain visible throughout.
+            band_colour = AMBER
+            marker_colour = REGEN_MARKER
+        else:
+            band_colour = _palette_colour(efficiency, EFFICIENCY_PALETTE)
+            marker_colour = _palette_colour(efficiency, MARKER_PALETTE)
         frame: list[RGBW] = [BLACK] * self.led_count
 
         for index in range(self.led_count):
@@ -242,21 +254,6 @@ class LedFrameMapper:
             frame.reverse()
             centre = (self.led_count - 1) - centre
         return tuple(frame), width, centre
-
-    def _regen_frame(self, now: float) -> Frame:
-        """Whole-bar orange flame with a gentle breath and local flicker."""
-        breath = 0.54 + (0.34 * ((math.sin(now * math.tau / 2.8) + 1.0) * 0.5))
-        frame: list[RGBW] = []
-        for index in range(self.led_count):
-            flicker = 0.72 + 0.19 * math.sin((now * 8.7) + index * 1.71) + 0.09 * math.sin((now * 15.1) - index * 2.37)
-            energy = _clamp(breath * flicker, 0.22, 1.0)
-            flame = _scale(AMBER, energy)
-            if energy > 0.72:
-                flame = _add(flame, _scale((85, 55, 0, 0), (energy - 0.72) / 0.28))
-            frame.append(flame)
-        if self.reverse:
-            frame.reverse()
-        return tuple(frame)
 
 
 class LedApp:
@@ -317,7 +314,7 @@ class LedApp:
 
                 output = (frame, round(brightness, 5))
                 periodic_resync = now >= self._next_full_resync_at
-                if output == self._last_sent and target.mode not in {"regen"} and not periodic_resync:
+                if output == self._last_sent and not periodic_resync:
                     continue
 
                 self._transport.set_brightness(brightness)

@@ -2,24 +2,25 @@ from __future__ import annotations
 
 """Log conversion and replay helpers for FoxDash.
 
-This file deliberately keeps old decoded-log -> UI-display conversion separate
-from the Textual app. The UI should never learn how to interpret PSA decoded CSV
-columns directly. It consumes TelemetrySnapshot, like a civilised little parasite.
+The telemetry engine is the single interpretation layer shared by live polling,
+replay, the UI and the physical LED strip. Raw/decoded PSA values become stable
+proxies, driving state and scores here; renderers remain deliberately dumb.
 """
 
-import csv
 import datetime as dt
 import math
 import time
 from collections import deque
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Deque, Iterable
 
 from .telemetry import DISPLAY_FIELD_NAMES, TelemetrySnapshot
 
 KM_TO_MPS = 0.44704
 G = 9.80665
+ACCEL_REGRESSION_WINDOW_S = 2.5
+ACCEL_RESET_GAP_S = 4.0
+LUGGING_PERSISTENCE_S = 1.0
 
 
 def is_num(value: Any) -> bool:
@@ -63,7 +64,6 @@ def parse_timestamp_seconds(value: Any, fallback: float) -> float:
     if not s:
         return fallback
     try:
-        # Handles offsets like +01:00 from the Pi logger.
         return dt.datetime.fromisoformat(s).timestamp()
     except ValueError:
         return fallback
@@ -89,6 +89,11 @@ def norm(value: Any, lo: float, hi: float) -> float | None:
     return clamp((v - lo) * 100.0 / (hi - lo), 0.0, 100.0)
 
 
+def _flag(value: Any) -> bool:
+    parsed = parse_float(value)
+    return parsed is not None and parsed > 0.5
+
+
 @dataclass
 class TelemetryRollingState:
     """Per-runtime/session state. Nothing here survives a new FoxDash session."""
@@ -102,6 +107,7 @@ class TelemetryRollingState:
     prev_rail_proxy: float | None = None
     relative_accel_mps2: float | None = None
     relative_accel_g: float | None = None
+    speed_window: Deque[tuple[float, float]] = None  # type: ignore[assignment]
     soot_window: Deque[tuple[float, float]] = None  # type: ignore[assignment]
     poll_window: Deque[tuple[float, bool]] = None  # type: ignore[assignment]
     session_extrema: dict[str, tuple[float, float]] = None  # type: ignore[assignment]
@@ -109,6 +115,8 @@ class TelemetryRollingState:
     first_valid_sample_at: str = ""
 
     def __post_init__(self) -> None:
+        if self.speed_window is None:
+            self.speed_window = deque()
         if self.soot_window is None:
             self.soot_window = deque()
         if self.poll_window is None:
@@ -128,15 +136,11 @@ class TelemetryRollingState:
         return good * 100.0 / len(self.poll_window)
 
     def observe_session_extrema(self, key: str, value: Any) -> tuple[float | None, float | None]:
-        """Update and return min/max for this runtime session only."""
         parsed = parse_float(value)
         if parsed is None:
             return self.session_extrema.get(key, (None, None))
         old = self.session_extrema.get(key)
-        if old is None:
-            current = (parsed, parsed)
-        else:
-            current = (min(old[0], parsed), max(old[1], parsed))
+        current = (parsed, parsed) if old is None else (min(old[0], parsed), max(old[1], parsed))
         self.session_extrema[key] = current
         return current
 
@@ -160,34 +164,66 @@ def canonical_from_decoded_row(row: dict[str, Any]) -> dict[str, Any]:
         else:
             c[key] = parse_float(value)
 
-    # Old log aliases from pre-Pi-display conversion.
     c["inj1FlowCorr"] = parse_float(get(row, "inj1FlowCorr", "inj1FlowCorr_pct"))
     c["inj2FlowCorr"] = parse_float(get(row, "inj2FlowCorr", "inj2FlowCorr_pct"))
     c["inj3FlowCorr"] = parse_float(get(row, "inj3FlowCorr", "inj3FlowCorr_pct"))
     c["inj4FlowCorr"] = parse_float(get(row, "inj4FlowCorr", "inj4FlowCorr_pct"))
 
-    # If boost is not present, derive from absolute turbo pressure and baro.
     turbo = parse_float(get(row, "turboMeasured"))
     atm = parse_float(get(row, "atmospheric"))
     if parse_float(get(row, "boost_mbar")) is None and turbo is not None and atm is not None:
         c["boost_mbar"] = turbo - atm
-
     return c
 
 
+def _regression_acceleration(rolling: TelemetryRollingState) -> float | None:
+    if len(rolling.speed_window) < 2:
+        return None
+    t0 = rolling.speed_window[0][0]
+    xs = [timestamp - t0 for timestamp, _speed in rolling.speed_window]
+    ys = [speed for _timestamp, speed in rolling.speed_window]
+    x_mean = sum(xs) / len(xs)
+    y_mean = sum(ys) / len(ys)
+    denominator = sum((x - x_mean) ** 2 for x in xs)
+    if denominator <= 1e-9:
+        return None
+    slope_mph_s = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / denominator
+    return slope_mph_s * KM_TO_MPS
+
+
 def update_rolling_derived(canonical: dict[str, Any], rolling: TelemetryRollingState, now_s: float) -> dict[str, Any]:
+    """Update session derivatives using a short least-squares speed window.
+
+    Adjacent-sample differentiation amplified the ECU's speed quantisation and
+    poll jitter. A ~2.5 second rolling fit remains responsive while making the
+    driving-state thresholds substantially less twitchy in the historical data.
+    """
     speed = parse_float(canonical.get("speed_mph"))
     soot = parse_float(canonical.get("fapSoot"))
 
     if rolling.start_s is None:
         rolling.start_s = now_s
-    rolling.prev_sample_s = rolling.last_sample_s
+
+    previous_sample_s = rolling.last_sample_s
+    rolling.prev_sample_s = previous_sample_s
     rolling.last_sample_s = now_s
 
-    if speed is not None and rolling.prev_speed_mph is not None and rolling.prev_sample_s is not None:
-        dt_s = max(0.05, now_s - rolling.prev_sample_s)
-        rolling.relative_accel_mps2 = ((speed - rolling.prev_speed_mph) * KM_TO_MPS) / dt_s
-        rolling.relative_accel_g = rolling.relative_accel_mps2 / G
+    if previous_sample_s is not None:
+        gap_s = now_s - previous_sample_s
+        if gap_s <= 0.0 or gap_s > ACCEL_RESET_GAP_S:
+            rolling.speed_window.clear()
+
+    if speed is None:
+        rolling.relative_accel_mps2 = None
+        rolling.relative_accel_g = None
+    else:
+        rolling.speed_window.append((now_s, speed))
+        while rolling.speed_window and now_s - rolling.speed_window[0][0] > ACCEL_REGRESSION_WINDOW_S:
+            rolling.speed_window.popleft()
+        rolling.relative_accel_mps2 = _regression_acceleration(rolling)
+        rolling.relative_accel_g = (
+            rolling.relative_accel_mps2 / G if rolling.relative_accel_mps2 is not None else None
+        )
     rolling.prev_speed_mph = speed
 
     if soot is not None:
@@ -219,9 +255,6 @@ def derive_relative_accel_state(accel_mps2: Any) -> str:
     return "steady"
 
 
-LUGGING_PERSISTENCE_S = 0.75
-
-
 def normalise_gear(value: Any) -> str:
     gear = parse_str(value, "").upper()
     return gear if gear else "--"
@@ -240,7 +273,6 @@ def gear_is_engaged(gear: str) -> bool:
 
 
 def low_rpm_threshold(gear: str) -> float:
-    """Gear-aware low-RPM threshold used by the shared interpretation layer."""
     if gear == "R":
         return 1400.0
     return {
@@ -270,22 +302,22 @@ def persisted_lugging_candidate(rolling: TelemetryRollingState, candidate: bool,
 def derive_driving_state(values: dict[str, Any], rolling: TelemetryRollingState, now_s: float) -> str:
     """Interpret drivetrain state before scoring.
 
-    Lugging requires an engaged drivetrain, a meaningful torque request, actual
-    load support, low RPM for the *current* gear, and a short time persistence.
-    Pedal-free coasting and engine braking are resolved first so gravity cannot
-    falsely trigger the diesel's panic button.
+    Historical replay showed that pedal alone is not an engine-demand signal on
+    this car because the speed limiter commonly leaves the pedal near its cap.
+    Lugging/high-demand therefore require delivered/requested effort as well as
+    driver intent and motion context.
     """
     rpm = parse_float(values.get("rpm"))
     speed = parse_float(values.get("speed_mph"))
     pedal = parse_float(values.get("pedalProxy"))
     load = parse_float(values.get("loadProxy"))
     abs_load = parse_float(values.get("absLoadProxy"))
+    boost_target = parse_float(values.get("boostTargetProxy"))
     gear = normalise_gear(values.get("gear"))
     clutch = parse_float(values.get("CL")) or 0.0
     brake = parse_float(values.get("BR")) or 0.0
     accel = parse_float(values.get("relativeAccel_mps2"))
 
-    # Without core inputs we have no right to assign a confident dynamic state.
     if rpm is None or speed is None or pedal is None:
         reset_lugging_candidate(rolling)
         return "unknown"
@@ -308,25 +340,28 @@ def derive_driving_state(values: dict[str, Any], rolling: TelemetryRollingState,
             return "idle"
         return "neutral-roll" if moving else "neutral"
 
-    # Zero pedal in a real gear is a coast/overrun state, never lugging.  A
-    # downhill can maintain or even gain speed; throttle request remains the
-    # useful discriminator rather than acceleration sign alone.
     if moving and pedal <= 7.0:
         reset_lugging_candidate(rolling)
         if rpm >= 1250.0 and accel is not None and accel < -0.12:
             return "engine-braking"
         return "coasting"
 
-    demand_present = pedal >= 20.0 and (load is None or load >= 24.0)
-    actual_load_present = abs_load is None or abs_load >= 18.0
+    demand_present = pedal >= 20.0 and load is not None and load >= 35.0
+    actual_load_present = abs_load is not None and abs_load >= 30.0
+    effort_supported = (
+        (boost_target is not None and boost_target >= 300.0)
+        or (accel is not None and accel >= 0.15)
+    )
     low_rpm = rpm < low_rpm_threshold(gear)
-    lugging_candidate = moving and demand_present and actual_load_present and low_rpm
+    lugging_candidate = (
+        moving and demand_present and actual_load_present and effort_supported and low_rpm
+    )
     lugging_persisted = persisted_lugging_candidate(rolling, lugging_candidate, now_s)
 
     if reverse:
         if lugging_persisted:
             return "reverse-lugging"
-        if demand_present:
+        if demand_present and actual_load_present:
             return "reverse-load"
         return "reversing"
 
@@ -340,7 +375,18 @@ def derive_driving_state(values: dict[str, Any], rolling: TelemetryRollingState,
         return "accelerating"
     if accel is not None and accel < -0.5:
         return "decelerating"
-    if pedal > 60.0:
+
+    high_demand = (
+        load is not None
+        and abs_load is not None
+        and load >= 55.0
+        and abs_load >= 55.0
+        and (
+            (boost_target is not None and boost_target >= 700.0)
+            or (accel is not None and accel >= 0.15)
+        )
+    )
+    if high_demand:
         return "high-demand"
     return "cruise"
 
@@ -356,7 +402,8 @@ def derive_drive_state_confidence(values: dict[str, Any]) -> float:
 
 def derive_score_confidence(values: dict[str, Any]) -> tuple[float, bool, str]:
     missing = [
-        label for key, label in (("rpm", "RPM"), ("speed_mph", "speed"), ("pedalProxy", "pedal"))
+        label
+        for key, label in (("rpm", "RPM"), ("speed_mph", "speed"), ("pedalProxy", "pedal"))
         if parse_float(values.get(key)) is None
     ]
     gear = normalise_gear(values.get("gear"))
@@ -368,11 +415,6 @@ def derive_score_confidence(values: dict[str, Any]) -> tuple[float, bool, str]:
 
 
 def derive_guidance(values: dict[str, Any]) -> tuple[float | None, str]:
-    """Return one signed driver correction from the same interpreted state.
-
-    -1 means less engine speed / shift up / ease. +1 means more engine speed /
-    downshift. This is the only source the LED renderer may use for position.
-    """
     confidence, valid, _reason = derive_score_confidence(values)
     if not valid or confidence < 85.0:
         return None, "telemetry_incomplete"
@@ -427,9 +469,7 @@ def derive_dpf_state(canonical: dict[str, Any], rolling: TelemetryRollingState) 
     ftemp = parse_float(canonical.get("fapTemp"))
     fpress = parse_float(canonical.get("fapDiffPressure"))
     rpm = parse_float(canonical.get("rpm"))
-
-    if soot is None or ftemp is None:
-        return "UNKNOWN", "·"
+    regen_active = _flag(canonical.get("activeRegeneration"))
 
     trend = "flat"
     if len(rolling.soot_window) >= 2:
@@ -442,26 +482,32 @@ def derive_dpf_state(canonical: dict[str, Any], rolling: TelemetryRollingState) 
                 trend = "up"
             elif slope < -0.002:
                 trend = "down"
-
     arrow = {"up": "↑", "down": "↓", "flat": "→"}.get(trend, "·")
 
+    # Preserve the existing pressure warning priority. Confirmed regeneration
+    # remains an independent boolean in the snapshot, so the LED can still use
+    # amber while the textual state reports a more important pressure condition.
     if fpress is not None and rpm is not None:
         if (rpm < 2200 and fpress > 180) or fpress > 230:
             return "PRESSURE", arrow
 
-    # REGEN is intentionally not inferred from hot exhaust or falling soot.
-    # The currently mapped raw byte is not trusted enough yet, so confirmed
-    # regeneration stays disabled until the flag is proven against Diagbox/FAP.
+    if regen_active:
+        return "REGEN", arrow
 
+    if soot is None or ftemp is None:
+        return "UNKNOWN", "·"
     if ftemp < 180:
         return "COLD", "·"
     if trend == "down" and ftemp > 300:
+        # Useful thermal/soot observation, but deliberately *not* confirmation
+        # of regeneration and therefore never an LED regen trigger.
         return "BURNING", "↓"
     if trend == "up":
         return "CLIMBING", "↑"
     if ftemp > 430:
         return "HOT", arrow
     return "STABLE", arrow
+
 
 def build_proxy_values(canonical: dict[str, Any], rolling: TelemetryRollingState, now_s: float) -> dict[str, Any]:
     derived = update_rolling_derived(canonical, rolling, now_s)
@@ -522,6 +568,9 @@ def build_proxy_values(canonical: dict[str, Any], rolling: TelemetryRollingState
     air_norm = norm(air_meas, 100.0, 900.0)
     rpm_effort_norm = norm(rpm, 800.0, 3800.0)
 
+    # Keep the established proxy weights in pass 1. The limiter-heavy pedal
+    # behaviour affects these too, but score/proxy recalibration belongs in the
+    # next data-backed pass rather than moving every threshold simultaneously.
     load_proxy = weighted_average([
         (pedal_proxy, 0.35),
         (inj_norm, 0.25),
@@ -539,6 +588,7 @@ def build_proxy_values(canonical: dict[str, Any], rolling: TelemetryRollingState
     ], default=0.0)
 
     dpf_status, dpf_arrow = derive_dpf_state(canonical, rolling)
+    regen_active = _flag(canonical.get("activeRegeneration"))
     relative_accel = derived.get("relativeAccel_mps2")
 
     out: dict[str, Any] = {
@@ -587,6 +637,7 @@ def build_proxy_values(canonical: dict[str, Any], rolling: TelemetryRollingState
         "dpfSoot": canonical.get("fapSoot"),
         "dpfStatus": dpf_status,
         "dpfTrendArrow": dpf_arrow,
+        "dpfRegenerationActive": regen_active,
         "coolant": canonical.get("coolant"),
         "oilTemp": canonical.get("oilTemp", None),
         "fuelTemp": canonical.get("fuelTemp"),
@@ -642,16 +693,10 @@ def score_operating_zone(v: dict[str, Any]) -> float:
             score = 48.0
         return clamp(score, 0.0, 78.0)
 
-    # Overrun and true coasting can be fuel-efficient even at a higher RPM.
-    # Mood/strain still narrows the operating band and guidance nudges the
-    # driver down the revs if appropriate, but efficiency does not lie about
-    # zero/near-zero fuel demand merely because engine speed is high.
     if state in {"coasting", "engine-braking"} and pedal <= 7.0:
         return 88.0 if state == "coasting" else 84.0
 
     if reverse:
-        # Reverse is a manoeuvre, not a driving-economy contest. It can never
-        # wear the white crown, but normal gentle reversing is not condemned.
         if pedal > 35 or load > 45:
             return 54.0
         return 72.0
@@ -675,8 +720,6 @@ def score_operating_zone(v: dict[str, Any]) -> float:
     elif load > 35 and rpm < 1500:
         score -= min(18.0, (1500.0 - rpm) / 28.0 + (load - 35.0) * 0.15)
 
-    # A lower gear at busy RPM is more fuel-hungry even while acceleration is
-    # legitimate. The penalty is moderate during genuine demand, not excused.
     numeric_gear = gear_number(gear)
     if numeric_gear == 1 and rpm > 2800:
         score -= min(28.0, (rpm - 2800.0) / 33.0)
@@ -698,18 +741,10 @@ def score_operating_zone(v: dict[str, Any]) -> float:
         score = min(score, 62.0)
     elif state == "low-rpm-demand":
         score = min(score, 70.0)
-
     return clamp(score, 0.0, 100.0)
 
 
 def score_load_efficiency(v: dict[str, Any]) -> float:
-    """Fuel-economy demand score.
-
-    This is deliberately not a mechanical judgement. High demand may be valid
-    and even fun, but it is not good fuel economy. Speed limiter/no-accel and
-    fake-proxy mismatch penalties stay out until we have a firmer foothold in
-    reality. Tiny miracle: restraint.
-    """
     load = parse_float(v.get("loadProxy"))
     pedal = parse_float(v.get("pedalProxy"))
     inj = parse_float(v.get("injFlow"))
@@ -728,14 +763,9 @@ def score_load_efficiency(v: dict[str, Any]) -> float:
     if fuel_reg is not None:
         parts.append((fuel_reg, 0.10))
     if ac_press is not None:
-        # A/C is not "forgiven" by the economy score. Comfort is valid, but
-        # the compressor still costs energy, so it joins the demand blend as a
-        # small accessory-load contributor rather than a direct punishment.
         parts.append((norm(ac_press, 2.0, 20.0), 0.08))
     effort = weighted_average(parts, default=load if load is not None else 40.0)
 
-    # Low effort/coasting is good economy. Moderate demand is normal. Heavy
-    # demand drops quickly because the score is now fuel economy, not heroism.
     if effort <= 8:
         score = 96.0
     elif effort <= 22:
@@ -747,22 +777,14 @@ def score_load_efficiency(v: dict[str, Any]) -> float:
     else:
         score = 50.0 - (effort - 65.0) * 0.80
 
-    # Stationary/neutral caps. Neutral moving can be harmless, but on a modern
-    # diesel overrun-in-gear can use less fuel than neutral idle, so it doesn't
-    # get to wear the little crown.
     if speed is not None and speed < 1.0:
         score = min(score, 62.0)
     if gear == "N" and speed is not None and speed > 3.0:
         score = min(score, 78.0)
-
     return clamp(score, 0.0, 100.0)
 
-def score_thermal_efficiency(v: dict[str, Any]) -> float:
-    """Fuel-economy thermal score.
 
-    Cold engines are inefficient. Warm-but-not-silly-hot is good. That is the
-    whole sermon; temperatures are boring and therefore useful.
-    """
+def score_thermal_efficiency(v: dict[str, Any]) -> float:
     engine_temp = parse_float(v.get("engineTempProxy"))
     heat_soak = parse_float(v.get("heatSoakProxy"))
     intake = parse_float(v.get("intakeTemp"))
@@ -788,8 +810,8 @@ def score_thermal_efficiency(v: dict[str, Any]) -> float:
         score -= min(14.0, (heat_soak - 12.0) * 0.45)
     if intake is not None and intake > 38:
         score -= min(10.0, (intake - 38.0) * 0.25)
-
     return clamp(score, 0.0, 100.0)
+
 
 def score_flow_efficiency(v: dict[str, Any]) -> float:
     boost_err = parse_float(v.get("boostErrorProxy"))
@@ -834,29 +856,17 @@ def score_flow_efficiency(v: dict[str, Any]) -> float:
         if over == 0 and demand > 20:
             score += 2.0
 
-    # EGR and air mixer tracking are air-path health signals. They are useful,
-    # but not allowed to dominate fuel-economy scoring because emissions control
-    # can move these around legitimately. Tiny leash, useful bite.
     if rpm is not None and rpm > 1000 and demand > 15:
         if egr_err is not None:
             allowed = max(8.0, abs(egr_target or 0.0) * 0.10) * demand_factor
-            over = max(0.0, abs(egr_err) - allowed)
-            score -= min(6.0, over / 4.0)
+            score -= min(6.0, max(0.0, abs(egr_err) - allowed) / 4.0)
         if mix_err is not None:
             allowed = max(8.0, abs(mix_target or 0.0) * 0.10) * demand_factor
-            over = max(0.0, abs(mix_err) - allowed)
-            score -= min(6.0, over / 4.0)
-
+            score -= min(6.0, max(0.0, abs(mix_err) - allowed) / 4.0)
     return clamp(score, 0.0, 100.0)
 
 
 def score_thermal_comfort(v: dict[str, Any]) -> float:
-    """Mechanical comfort thermal score for mood.
-
-    Mood cares whether the engine feels comfortable, not whether the current
-    state is economical. Cold is uncomfortable, warming is okay, hot gets the
-    red carpet of shame.
-    """
     engine_temp = parse_float(v.get("engineTempProxy"))
     heat_soak = parse_float(v.get("heatSoakProxy"))
     thermal_max = parse_float(v.get("thermalMaxProxy"))
@@ -886,8 +896,8 @@ def score_thermal_comfort(v: dict[str, Any]) -> float:
         score -= 16.0
     return clamp(score, 0.0, 100.0)
 
+
 def score_strain(v: dict[str, Any]) -> float:
-    """Mechanical comfort / inverse strain score for mood."""
     rpm = parse_float(v.get("rpm"))
     pedal = parse_float(v.get("pedalProxy")) or 0.0
     load = parse_float(v.get("loadProxy")) or 0.0
@@ -907,8 +917,6 @@ def score_strain(v: dict[str, Any]) -> float:
         if "lugging" in state:
             score -= 8.0
 
-    # High RPM during engine braking is not fuel waste, but it is still a
-    # narrower, noisier operating point. Keep the mechanical penalty modest.
     if rpm is not None and state == "engine-braking" and rpm > 2800:
         score -= min(18.0, 5.0 + (rpm - 2800.0) / 65.0)
     elif rpm is not None and rpm > 3600:
@@ -928,12 +936,6 @@ def score_strain(v: dict[str, Any]) -> float:
 
 
 def score_delivery(v: dict[str, Any], rolling: TelemetryRollingState) -> float:
-    """Delivery quality for mood.
-
-    This is physical response/clean tracking, not fuel economy. It should stay
-    high when the car is delivering calmly, then fall when boost/rail/air are
-    noticeably missing their marks under demand.
-    """
     boost_err = parse_float(v.get("boostErrorProxy"))
     rail_err = parse_float(v.get("railErrorProxy"))
     air_err = parse_float(v.get("airFlowError"))
@@ -968,22 +970,18 @@ def score_delivery(v: dict[str, Any], rolling: TelemetryRollingState) -> float:
         allowed = max(65.0, abs(air_target or 0.0) * 0.13) * demand_factor
         score -= min(16.0, max(0.0, abs(air_err) - allowed) / 13.0)
 
-    # Delivery is allowed to care a little more about air-path mismatch than
-    # pure economy. If EGR/mixer are not tracking under demand, the car may feel
-    # lazy or constrained even when the main pressure numbers are mostly sane.
     if rpm is not None and rpm > 1000 and demand > 15:
         if egr_err is not None:
             allowed = max(8.0, abs(egr_target or 0.0) * 0.12) * demand_factor
-            over = max(0.0, abs(egr_err) - allowed)
-            score -= min(8.0, over / 3.5)
+            score -= min(8.0, max(0.0, abs(egr_err) - allowed) / 3.5)
         if mix_err is not None:
             allowed = max(8.0, abs(mix_target or 0.0) * 0.12) * demand_factor
-            over = max(0.0, abs(mix_err) - allowed)
-            score -= min(8.0, over / 3.5)
+            score -= min(8.0, max(0.0, abs(mix_err) - allowed) / 3.5)
 
     if state == "lugging":
         score = min(score, 66.0)
     return clamp(score, 0.0, 100.0)
+
 
 def score_electrical(v: dict[str, Any], rolling: TelemetryRollingState) -> float:
     batt = parse_float(v.get("batteryV"))
@@ -1035,13 +1033,7 @@ def derive_mood_state(mood_score: float | None, v: dict[str, Any]) -> str:
 
 
 def canonical_from_ui_display_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Reverse-map a UI display row into engine input values for full-train replay.
-
-    Old UI CSVs are not raw decoder logs, but they contain enough actual,
-    target and environmental values to re-run the current proxy/score layer.
-    That keeps replay behind the same engine boundary as live data instead
-    of allowing UI replay to secretly bypass the brain.
-    """
+    """Reverse-map a UI display row into engine input values for full-train replay."""
     c: dict[str, Any] = {}
     for key, value in row.items():
         c[key] = parse_str(value) if key in {"timestamp", "gear"} else parse_float(value)
@@ -1069,7 +1061,7 @@ def canonical_from_ui_display_row(row: dict[str, Any]) -> dict[str, Any]:
     c["turboMeasured"] = parse_float(get(row, "mapProxy"))
     target_boost = parse_float(get(row, "boostTargetProxy"))
     baro = c["atmospheric"]
-    c["turboTarget"] = (target_boost + baro) if target_boost is not None and baro is not None else None
+    c["turboTarget"] = target_boost + baro if target_boost is not None and baro is not None else None
     c["egrTarget"] = parse_float(get(row, "egrTarget"))
     c["egrRepeat"] = parse_float(get(row, "egrActual", "egrRepeat"))
     c["airMixerTarget"] = parse_float(get(row, "airMixerTarget"))
@@ -1079,6 +1071,7 @@ def canonical_from_ui_display_row(row: dict[str, Any]) -> dict[str, Any]:
     c["fapSoot"] = parse_float(get(row, "dpfSoot", "fapSoot"))
     c["fapTemp"] = parse_float(get(row, "fapTemp"))
     c["fapDiffPressure"] = parse_float(get(row, "fapDiffPressure", "dpfDiffProxy"))
+    c["activeRegeneration"] = parse_float(get(row, "dpfRegenerationActive", "activeRegeneration"))
     c["lastRegen_mi"] = parse_float(get(row, "lastRegen_mi"))
     c["avg10Regen_mi"] = parse_float(get(row, "avg10Regen_mi"))
     c["fapLifeLeft_mi"] = parse_float(get(row, "fapLifeLeft_mi"))
@@ -1090,12 +1083,7 @@ def canonical_from_ui_display_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class TelemetryEngine:
-    """Owns rolling derived values, DPF state and all scoring.
-
-    Both live polling and replay submit canonical input dictionaries here.
-    The engine returns one display-ready ``TelemetrySnapshot``. It knows
-    nothing about serial, CSV handles, Textual, LEDs or I²C hardware.
-    """
+    """Own rolling derived values, DPF state and all scoring."""
 
     def __init__(self, *, session_id: str = "", boot_id: str = "", session_started_at: str = "") -> None:
         self.rolling = TelemetryRollingState()
@@ -1119,7 +1107,10 @@ class TelemetryEngine:
         source_time_s: float | None = None,
     ) -> TelemetrySnapshot:
         canonical = dict(canonical)
-        out_timestamp = timestamp or parse_str(canonical.get("timestamp"), dt.datetime.now().astimezone().isoformat(timespec="milliseconds"))
+        out_timestamp = timestamp or parse_str(
+            canonical.get("timestamp"),
+            dt.datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        )
         now_s = source_time_s if source_time_s is not None else time.monotonic()
         self.rolling.mark_poll(now_s, poll_ok)
         values = build_proxy_values(canonical, self.rolling, now_s)
@@ -1131,7 +1122,6 @@ class TelemetryEngine:
         if telemetry_valid and not self.rolling.first_valid_sample_at:
             self.rolling.first_valid_sample_at = out_timestamp
 
-        # Carry slow maintenance values through the same refined snapshot.
         additive_vol = parse_float(canonical.get("fapAdditiveVol"))
         additive_remain = parse_float(canonical.get("fapAdditiveRemain"))
         additive_percent = None
