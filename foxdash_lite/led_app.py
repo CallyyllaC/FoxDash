@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Final
 
 from .blinkstick_rgbw import BlinkStickProRgbw, RGBW
-
 from .brightness_policy import BrightnessPolicy
 from .runtime_types import DashboardState
 from .telemetry import TelemetrySnapshot
@@ -44,9 +43,33 @@ Frame = tuple[RGBW, ...]
 FloatPixel = tuple[float, float, float, float]
 FloatFrame = tuple[FloatPixel, ...]
 
-# One direct economy gradient: white -> cyan -> fuchsia -> red.
-# The renderer does no RPM/load inference. It receives the score already made
-# meaningful by the shared telemetry engine.
+# Economy colour uses a perceptual transfer curve derived from the historical
+# score distribution. The underlying score remains untouched; only the physical
+# colour uses more of the available red -> fuchsia -> cyan -> white range.
+EFFICIENCY_VISUAL_CURVE: Final[tuple[tuple[float, float], ...]] = (
+    (50.0, 0.0),
+    (60.0, 22.0),
+    (68.0, 38.0),
+    (76.0, 55.0),
+    (86.0, 76.0),
+    (92.0, 90.0),
+    (97.0, 100.0),
+)
+
+# Mechanical comfort is normally high on a healthy car. A linear 0..100 width
+# mapping therefore spent almost every journey at roughly the same wide band.
+# These anchors intentionally expand the healthy 72..98 region while keeping
+# genuinely unhappy states visibly narrow.
+MOOD_WIDTH_CURVE: Final[tuple[tuple[float, float], ...]] = (
+    (45.0, 0.00),
+    (60.0, 0.11),
+    (72.0, 0.22),
+    (82.0, 0.39),
+    (90.0, 0.56),
+    (95.0, 0.78),
+    (98.0, 1.00),
+)
+
 EFFICIENCY_PALETTE: Final[tuple[tuple[float, RGBW], ...]] = (
     (0.0, RED),
     (35.0, RED),
@@ -56,8 +79,6 @@ EFFICIENCY_PALETTE: Final[tuple[tuple[float, RGBW], ...]] = (
     (100.0, WHITE),
 )
 
-# Saturated focal colours. Peak economy has a vivid cyan marker against its
-# white band so the bar still has a readable centre.
 MARKER_PALETTE: Final[tuple[tuple[float, RGBW], ...]] = (
     (0.0, RED),
     (45.0, (255, 0, 95, 0)),
@@ -106,6 +127,19 @@ def _ema_alpha(delta_s: float, tau_s: float) -> float:
     return 1.0 - math.exp(-delta_s / max(0.001, tau_s))
 
 
+def _curve_value(value: float, curve: tuple[tuple[float, float], ...]) -> float:
+    """Piecewise-linear score transfer with clamped endpoints."""
+    if value <= curve[0][0]:
+        return curve[0][1]
+    low_x, low_y = curve[0]
+    for high_x, high_y in curve[1:]:
+        if value <= high_x:
+            portion = (value - low_x) / max(0.001, high_x - low_x)
+            return low_y + ((high_y - low_y) * portion)
+        low_x, low_y = high_x, high_y
+    return curve[-1][1]
+
+
 def _palette_colour(score: float, palette: tuple[tuple[float, RGBW], ...]) -> RGBW:
     score = _clamp(score, 0.0, 100.0)
     low_score, low_colour = palette[0]
@@ -140,7 +174,7 @@ class LedFrameMapper:
       guidance, and inferred BURNING state is never treated as regeneration.
 
     This layer must stay deliberately dumb. It never turns RPM, pedal, reverse,
-    or load into new opinions. That work belongs in ``TelemetryEngine``.
+    or load into new opinions. That work belongs upstream.
     """
 
     def __init__(
@@ -158,8 +192,6 @@ class LedFrameMapper:
         self.led_count = int(led_count)
         self.reverse = bool(reverse)
         self.max_mood_width_fraction = float(max_mood_width_fraction)
-        # Keep the existing fixed fallback brightness while we collect real
-        # cabin-lux history. Ambient control is opt-in only after calibration.
         self.use_ambient_brightness = bool(use_ambient_brightness)
         self._brightness_policy = BrightnessPolicy()
 
@@ -214,37 +246,33 @@ class LedFrameMapper:
 
         max_width = max(MIN_MOOD_WIDTH_PIXELS, self.led_count * self.max_mood_width_fraction)
         min_width = min(MIN_MOOD_WIDTH_PIXELS, max_width)
-        width = min_width + (_clamp(mood / 100.0) * (max_width - min_width))
+        mood_width_fraction = _clamp(_curve_value(mood, MOOD_WIDTH_CURVE))
+        width = min_width + (mood_width_fraction * (max_width - min_width))
 
         # Guidance is signed upstream: -1 means less engine speed, +1 means more.
         centre = ((1.0 + _clamp(guidance, -1.0, 1.0)) * 0.5) * (self.led_count - 1)
         half_width = max(0.75, width / 2.0)
-        # Preserve the whole relaxed/picky window within physical LEDs.
         centre = _clamp(centre, half_width - 0.5, (self.led_count - 1) - (half_width - 0.5))
 
         if regen_active:
-            # Regeneration is important enough to own colour, not geometry.
-            # Mood width and guidance position remain visible throughout.
+            # Confirmed regeneration owns colour only. Geometry continues to
+            # report mechanical comfort and guidance throughout the event.
             band_colour = AMBER
             marker_colour = REGEN_MARKER
         else:
-            band_colour = _palette_colour(efficiency, EFFICIENCY_PALETTE)
-            marker_colour = _palette_colour(efficiency, MARKER_PALETTE)
-        frame: list[RGBW] = [BLACK] * self.led_count
+            visual_efficiency = _curve_value(efficiency, EFFICIENCY_VISUAL_CURVE)
+            band_colour = _palette_colour(visual_efficiency, EFFICIENCY_PALETTE)
+            marker_colour = _palette_colour(visual_efficiency, MARKER_PALETTE)
 
+        frame: list[RGBW] = [BLACK] * self.led_count
         for index in range(self.led_count):
             distance = abs(index - centre)
-            # Soft bell/triangular hybrid. Centre stays visible, but every edge
-            # falls away continuously through the diffuser instead of making a
-            # static block.
             falloff = _clamp(1.0 - distance / (half_width + 0.45))
             if falloff <= 0.0:
                 continue
             body_energy = 0.10 + (0.52 * (falloff ** 1.35))
             pixel = _scale(band_colour, body_energy)
 
-            # The marker is intentionally bolder and more saturated than the
-            # band. It crossfades across about two physical LEDs as it moves.
             marker = _clamp(1.0 - distance / 1.05)
             if marker > 0.0:
                 pixel = _add(pixel, _scale(marker_colour, 0.82 * marker))
