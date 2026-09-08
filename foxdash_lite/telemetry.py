@@ -76,6 +76,10 @@ class TelemetrySnapshot:
     dpfDiffProxy: Optional[float] = None
 
     pedalProxy: Optional[float] = None
+    # Pedal-free estimate of actual/requested engine effort. This is separate
+    # from driver intent because the speed limiter can cap delivered torque
+    # while the accelerator remains near maximum travel.
+    engineDemandProxy: Optional[float] = None
     loadProxy: Optional[float] = None
     absLoadProxy: Optional[float] = None
     relativeAccel_mps2: Optional[float] = None
@@ -148,7 +152,7 @@ DISPLAY_FIELD_NAMES = [
     "rpm", "speed_mph", "gear", "drivingState", "guidanceCorrection", "guidanceReason",
     "coolant", "oilTemp", "fuelTemp", "airFlowSensorTemp", "airManifoldTemp", "externalTemp", "intakeTemp", "ambientTemp", "engineTempProxy", "heatSoakProxy", "thermalMaxProxy", "thermalState",
     "mapProxy", "boostProxy", "boostTargetProxy", "boostErrorProxy", "railProxy", "railTargetProxy", "railErrorProxy", "baroProxy", "dpfDiffProxy",
-    "pedalProxy", "loadProxy", "absLoadProxy", "relativeAccel_mps2", "relativeAccel_g", "relativeAccelState", "relativeAccelSessionMin_mps2", "relativeAccelSessionMax_mps2",
+    "pedalProxy", "engineDemandProxy", "loadProxy", "absLoadProxy", "relativeAccel_mps2", "relativeAccel_g", "relativeAccelState", "relativeAccelSessionMin_mps2", "relativeAccelSessionMax_mps2",
     "injFlow", "fuelFlowReg", "airFlowSetting", "airFlowMeasured", "airFlowError", "egrTarget", "egrActual", "egrError", "airMixerTarget", "airMixerActual", "airMixerError", "turboGeomTarget", "turboGeomActual", "turboGeomError",
     "batteryV", "airCPress_bar", "airCPressSessionMin_bar", "airCPressSessionMax_bar", "fapTemp", "fapDiffPressure", "lastRegen_mi", "avg10Regen_mi", "fapLifeLeft_mi", "fapAdditiveVol", "fapAdditiveRemain", "fapAdditivePercent",
     "inj1FlowCorr", "inj2FlowCorr", "inj3FlowCorr", "inj4FlowCorr",
