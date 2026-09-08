@@ -41,6 +41,9 @@ class TelemetrySnapshot:
     dpfSoot: Optional[float] = None
     dpfStatus: str = "STABLE"
     dpfTrendArrow: str = "→"
+    # Confirmed ECU state only. Inferred hot/falling-soot states deliberately
+    # remain separate so they cannot masquerade as an actual regeneration.
+    dpfRegenerationActive: bool = False
 
     rpm: Optional[float] = None
     speed_mph: Optional[float] = None
@@ -141,7 +144,7 @@ DISPLAY_FIELD_NAMES = [
     "sessionId", "bootId", "sessionStartedAt", "firstValidSampleAt",
     "obdConnection", "adapterState", "ecuSessionState", "protocol", "pollHealth", "sampleRateHz", "lastUpdateAge_s",
     "telemetryValid", "scoreConfidence", "scoreReason", "driveStateConfidence",
-    "dpfSoot", "dpfStatus", "dpfTrendArrow",
+    "dpfSoot", "dpfStatus", "dpfTrendArrow", "dpfRegenerationActive",
     "rpm", "speed_mph", "gear", "drivingState", "guidanceCorrection", "guidanceReason",
     "coolant", "oilTemp", "fuelTemp", "airFlowSensorTemp", "airManifoldTemp", "externalTemp", "intakeTemp", "ambientTemp", "engineTempProxy", "heatSoakProxy", "thermalMaxProxy", "thermalState",
     "mapProxy", "boostProxy", "boostTargetProxy", "boostErrorProxy", "railProxy", "railTargetProxy", "railErrorProxy", "baroProxy", "dpfDiffProxy",
