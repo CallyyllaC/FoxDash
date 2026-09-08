@@ -48,15 +48,41 @@ def main() -> int:
     assert picky_render.band_width < relaxed_render.band_width
     assert picky_render.guidance_position is not None and picky_render.guidance_position > relaxed_render.guidance_position
 
-    # The DPF remains the one full-strip effect override.
-    regen = TelemetrySnapshot(
+    # Confirmed DPF regeneration owns colour only. Mood width and guidance
+    # position remain useful, and the band stays localised rather than turning
+    # the entire strip into an orange warning lamp.
+    regen_base = TelemetrySnapshot(
         timestamp="", sample=3, telemetryValid=True, efficiencyScore=70.0, moodScore=79.0,
-        guidanceCorrection=0.0, dpfStatus="BURNING", rpm=2200.0, speed_mph=60.0, gear="6",
+        guidanceCorrection=-0.30, dpfStatus="STABLE", dpfRegenerationActive=False,
+        rpm=2200.0, speed_mph=60.0, gear="6",
     )
-    regen_render = mapper.render(state_for(regen), now=1.0)
-    assert regen_render.mode == "regen" and lit_count(regen_render.frame) == 24
+    normal_regen_geometry = mapper.render(state_for(regen_base), now=1.0)
+    confirmed_regen = TelemetrySnapshot(
+        **{
+            **regen_base.__dict__,
+            "dpfStatus": "REGEN",
+            "dpfRegenerationActive": True,
+        }
+    )
+    regen_render = mapper.render(state_for(confirmed_regen), now=1.0)
+    assert regen_render.mode == "regen"
+    assert 0 < lit_count(regen_render.frame) < mapper.led_count
+    assert abs(regen_render.band_width - normal_regen_geometry.band_width) < 1e-9
+    assert abs(regen_render.guidance_position - normal_regen_geometry.guidance_position) < 1e-9
+    assert regen_render.frame != normal_regen_geometry.frame
 
-    print("OK: LED mapping policy passed: colour=efficiency, width=mood, marker=guidance, regen override.")
+    # Hot/falling-soot BURNING is descriptive evidence only, not confirmation.
+    inferred_burning = TelemetrySnapshot(
+        **{
+            **regen_base.__dict__,
+            "dpfStatus": "BURNING",
+            "dpfRegenerationActive": False,
+        }
+    )
+    burning_render = mapper.render(state_for(inferred_burning), now=1.0)
+    assert burning_render.mode == "normal"
+
+    print("OK: LED mapping policy passed: colour=efficiency, width=mood, marker=guidance, confirmed regen=colour only.")
     return 0
 
 
