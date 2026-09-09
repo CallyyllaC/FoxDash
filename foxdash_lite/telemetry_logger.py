@@ -23,6 +23,7 @@ from .psa_protocol import (
 from .log_archive import CleanupSummary, cleanup_completed_journeys, safe_session_id
 from .log_format import CompactDictWriter, status_schema
 from .runtime_types import ConnectionAttemptEvent, EnvironmentSnapshot, PsaPollResult
+from .session_identity import session_sequence_from_id
 from .telemetry import DISPLAY_FIELD_NAMES, TelemetrySnapshot
 
 
@@ -63,6 +64,7 @@ class TelemetryLogger:
     def start(self, *, source_name: str, session_id: str = "", boot_id: str = "", session_started_at: str = "") -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         stamp = safe_session_id(session_id or _session_stamp())
+        sequence = session_sequence_from_id(session_id or stamp)
         # Register the new session before opening any files or starting cleanup.
         # Archiving can take minutes on the Pi when a large backlog exists, so
         # it must never sit on the UI's synchronous startup path.
@@ -93,13 +95,17 @@ class TelemetryLogger:
         self._handles["text"] = text
         text.write(f"FoxDash session started {session_started_at or dt.datetime.now().astimezone().isoformat(timespec='seconds')}\n")
         text.write(f"Session ID: {session_id or stamp}\n")
+        if sequence is not None:
+            text.write(f"Session Sequence: {sequence}\n")
+            text.write("Chronology: session sequence authoritative; wall clock informational\n")
         text.write(f"Boot ID: {boot_id or 'unavailable'}\n")
         text.write(f"Source: {source_name}\n")
         text.write("Logging owns files; reader owns serial; UI owns pixels.\n\n")
         text.write("journey_cleanup scheduled in background\n")
         schema_payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "session_id": session_id or stamp,
+            "session_sequence": sequence,
             "boot_id": boot_id or "unavailable",
             "encoding": "utf-8",
             "newline": "\\n",
