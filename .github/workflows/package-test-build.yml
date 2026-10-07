@@ -1,0 +1,30 @@
+name: Package FoxDash test build
+
+on:
+  push:
+    branches:
+      - package/foxdash-monotonic-test
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out test source
+        uses: actions/checkout@v4
+
+      - name: Create exact test-source ZIP
+        shell: bash
+        run: |
+          rm -f .github/workflows/package-test-build.yml
+          zip -r FoxDash-monotonic-log-order-test.zip . -x '.git/*' 'FoxDash-monotonic-log-order-test.zip'
+
+      - name: Upload packaged source
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoxDash-monotonic-log-order-test
+          path: FoxDash-monotonic-log-order-test.zip
+          if-no-files-found: error
+          retention-days: 1
