@@ -43,6 +43,16 @@ Windows replay/simulator:
 scripts\windows\run_replay.bat
 ```
 
+### Website media export (Windows)
+
+Developers can record the existing replay simulator and create web-ready media with:
+
+```powershell
+.\WebsiteExport.ps1
+```
+
+FFmpeg must already be installed and available on `PATH`; the exporter never installs system software. It launches the replay in a full-colour PowerShell console, captures FoxDash's exact 800x480 client area without the title bar or borders, then creates a 1280x768 H.264 MP4 and 720x432 animated WebPs under the ignored `website-export/` directory, preserving the 5:3 aspect ratio. The default recording is 60 seconds with the replay running at 2x speed. Pass `-DurationSeconds` or `-ReplaySpeed` to change those values, and edit the readable `$WebPClips` table near the top of `WebsiteExport.ps1` to adjust clip names, start times, and durations. `WebsiteExport.bat` is provided for double-click or Command Prompt use.
+
 Linux replay:
 
 ```bash

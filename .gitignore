@@ -24,3 +24,4 @@ Thumbs.db
 # Local archives
 *.zip
 /backup
+/website-export/
