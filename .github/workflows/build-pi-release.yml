@@ -1,0 +1,86 @@
+name: Build Pi release
+
+on:
+  push:
+    branches:
+      - build/pi-release-230069f
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build Pi-ready ZIP
+        shell: bash
+        run: |
+          set -euxo pipefail
+          RELEASE_DIR="FoxDash-Pi-2026-09-08-230069f"
+          ZIP_NAME="${RELEASE_DIR}.zip"
+
+          mkdir -p "$RELEASE_DIR/scripts" "$RELEASE_DIR/deploy"
+          cp -a foxdash_lite "$RELEASE_DIR/"
+          cp -a models "$RELEASE_DIR/"
+          cp -a scripts/linux "$RELEASE_DIR/scripts/"
+          cp -a deploy/raspberry-pi "$RELEASE_DIR/deploy/"
+          cp requirements.txt install.py README.md "$RELEASE_DIR/"
+
+          cat > "$RELEASE_DIR/RELEASE.txt" <<'EOF'
+          FoxDash Pi Release
+          Date: 2026-09-08
+          Source main commit: 230069fdab2d903a2d87685c232bd0fb97d9b3d7
+
+          Pi quick start:
+            ./scripts/linux/setup.sh
+            ./scripts/linux/run_live.sh
+
+          Existing installs can normally replace the application directory, while live logs remain in ~/CarOBD/logs.
+          This package intentionally excludes tests, simulator/sample data, Windows tooling, documentation assets, and offline ML-training dependencies.
+          EOF
+
+          chmod +x "$RELEASE_DIR"/scripts/linux/*.sh || true
+          chmod +x "$RELEASE_DIR"/deploy/raspberry-pi/*.sh || true
+          find "$RELEASE_DIR" -type d -name '__pycache__' -prune -exec rm -rf {} +
+          find "$RELEASE_DIR" -type f \( -name '*.pyc' -o -name '.DS_Store' \) -delete
+
+          zip -r -9 "$ZIP_NAME" "$RELEASE_DIR"
+
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          z = Path('FoxDash-Pi-2026-09-08-230069f.zip')
+          required = {
+              'FoxDash-Pi-2026-09-08-230069f/foxdash_lite/__main__.py',
+              'FoxDash-Pi-2026-09-08-230069f/foxdash_lite/telemetry_engine.py',
+              'FoxDash-Pi-2026-09-08-230069f/foxdash_lite/telemetry_calibration.py',
+              'FoxDash-Pi-2026-09-08-230069f/foxdash_lite/regime_model.py',
+              'FoxDash-Pi-2026-09-08-230069f/models/regime_model_2026-09-observe.json',
+              'FoxDash-Pi-2026-09-08-230069f/scripts/linux/setup.sh',
+              'FoxDash-Pi-2026-09-08-230069f/scripts/linux/run_live.sh',
+              'FoxDash-Pi-2026-09-08-230069f/requirements.txt',
+              'FoxDash-Pi-2026-09-08-230069f/install.py',
+              'FoxDash-Pi-2026-09-08-230069f/RELEASE.txt',
+          }
+          with zipfile.ZipFile(z) as archive:
+              names = set(archive.namelist())
+              missing = sorted(required - names)
+              assert not missing, f'Missing required release files: {missing}'
+              assert not any('/tests/' in n or '/tools/' in n or '/.github/' in n for n in names)
+              bad = archive.testzip()
+              assert bad is None, f'Corrupt member: {bad}'
+              print(f'VERIFIED: {z} contains {len(names)} entries, {z.stat().st_size} bytes')
+          PY
+
+          sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FoxDash-Pi-2026-09-08-230069f
+          path: |
+            FoxDash-Pi-2026-09-08-230069f.zip
+            FoxDash-Pi-2026-09-08-230069f.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
