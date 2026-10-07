@@ -61,3 +61,7 @@ Live session logs are written to `~/CarOBD/logs` by default. That data directory
 ## Notes
 
 FoxDash is a personal project built around one vehicle, its PSA SID807 ECU, and its hardware setup. The code is public because the project is useful to document and develop in the open, not because it is intended to be a universal OBD dashboard package.
+
+## Licence
+
+FoxDash project material is licensed under the [Awoo Licence v2.0](https://awoo.ltd/licence/). Third-party components remain subject to their respective licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

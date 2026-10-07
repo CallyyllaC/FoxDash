@@ -9,7 +9,7 @@
   ],
   "image": "images/awoo-card.png",
   "content": "docs/awoo.md",
-  "licence": "ERROR",
-  "licenceLink": "ERROR",
-  "licenceLinkText": "ERROR"
+  "licence": "Awoo Licence v2.0",
+  "licenceLink": "https://awoo.ltd/licence/",
+  "licenceLinkText": "Awoo Licence v2.0"
 }
