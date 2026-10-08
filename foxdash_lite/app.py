@@ -36,6 +36,7 @@ from .formatting import (
     value_delta_percent_text,
 )
 from .brightness_policy import AmbientPaletteController
+from .linked_brightness import LinkedBacklightOutput
 from .runtime_types import EnvironmentSnapshot
 from .state_store import DashboardStateStore
 from .telemetry import TelemetrySnapshot
@@ -183,6 +184,7 @@ class FoxDashApp(App[None]):
             AmbientPaletteController(initial_percent=self._ui_brightness)
             if use_ambient_brightness else None
         )
+        self._linked_backlight = LinkedBacklightOutput() if use_ambient_brightness else None
         self.ui_text = UiText.load()
 
     def compose(self) -> ComposeResult:
@@ -204,6 +206,8 @@ class FoxDashApp(App[None]):
         yield Static(id="debug_card", classes="debug-card hidden")
 
     def on_mount(self) -> None:
+        if self._linked_backlight is not None:
+            self._linked_backlight.start()
         self.screen.add_class(self.layout_mode)
         self._install_border_titles()
         self._apply_base_chrome()
@@ -282,11 +286,7 @@ class FoxDashApp(App[None]):
         return self._palette_mix(dark, bright)
 
     def set_ui_brightness(self, percent: float, *, update_cards: bool = True) -> None:
-        """Set UI palette brightness from a future ambient-light controller.
-
-        The display/backlight itself remains hardware-owned. This only lerps the
-        dashboard palette between the conservative night and full day endpoints.
-        """
+        """Interpolate dashboard palette colours without writing hardware PWM."""
         value = self._clamp_brightness(percent)
         if abs(value - self._ui_brightness) < 0.05:
             return
@@ -295,14 +295,27 @@ class FoxDashApp(App[None]):
         if update_cards and self._last_snapshot is not None:
             self._apply_card_alert_styles(self._last_snapshot)
 
+    def _set_linked_brightness(self, percent: float, *, update_cards: bool = True) -> None:
+        """One brightness factor feeds both palette interpolation and PWM."""
+        self.set_ui_brightness(percent, update_cards=update_cards)
+        if self._linked_backlight is not None:
+            self._linked_backlight.request_palette(self._ui_brightness)
+
+    def stop_brightness_output(self) -> None:
+        if self._linked_backlight is not None:
+            self._linked_backlight.stop()
+
+    def on_unmount(self) -> None:
+        self.stop_brightness_output()
+
     def action_dim_ui(self) -> None:
-        # Manual key input takes over until the next dashboard launch.
+        # Manual control takes over both the palette and PWM until restart.
         self._ambient_palette = None
-        self.set_ui_brightness(self._ui_brightness - 10.0)
+        self._set_linked_brightness(self._ui_brightness - 10.0)
 
     def action_brighten_ui(self) -> None:
         self._ambient_palette = None
-        self.set_ui_brightness(self._ui_brightness + 10.0)
+        self._set_linked_brightness(self._ui_brightness + 10.0)
 
     def _apply_base_chrome(self) -> None:
         self.screen.styles.background = Color.parse(self._palette_colour("screen", "background"))
@@ -384,12 +397,16 @@ class FoxDashApp(App[None]):
         state = self.state_store.latest()
         if self._ambient_palette is not None:
             environment = state.environment
-            self.set_ui_brightness(self._ambient_palette.update(
+            percent = self._ambient_palette.update(
                 ambient_lux=environment.ambient_lux_filtered,
                 sensor_ok=environment.sensor_ok and environment.light_state == "measuring",
                 sample=environment.sample,
                 now=time.monotonic(),
-            ), update_cards=False)
+            )
+            # Do not touch the hardware until a valid sensor sample arrives.
+            # Afterwards a sensor failure holds both outputs at their last level.
+            if self._ambient_palette.has_measurement:
+                self._set_linked_brightness(percent, update_cards=False)
         snap = state.telemetry
         self._last_snapshot = snap
         trend_key = (snap.sample, snap.timestamp)
@@ -910,6 +927,12 @@ class FoxDashApp(App[None]):
         table = Table.grid(expand=True)
         table.add_column(ratio=1, style="dim")
         table.add_column(ratio=3)
+        pwm = self._linked_backlight.snapshot() if self._linked_backlight is not None else None
+        pwm_text = (
+            f" | PWM {pwm.actual_pwm if pwm.actual_pwm is not None else '--'}"
+            f"/{pwm.target_pwm if pwm.target_pwm is not None else '--'}"
+            if pwm is not None else ""
+        )
         fields: list[tuple[str, Any]] = [
             ("Keys", "q quit | d debug | [ dim | ] brighten"),
             ("Source", self.state_store.latest().source_name),
@@ -919,7 +942,8 @@ class FoxDashApp(App[None]):
             ("Timestamp", s.timestamp),
             ("Session", f"{s.sessionId or '--'} | boot {s.bootId[:8] if s.bootId else '--'}"),
             ("Score", f"{fmt(s.scoreConfidence, 0)}% | {s.scoreReason}"),
-            ("Palette", f"{self._ui_brightness:.1f}% | {'AUTO' if self._ambient_palette is not None else 'MANUAL'} | colours only"),
+            ("Brightness", f"{self._ui_brightness:.1f}% palette{pwm_text} | {'AUTO' if self._ambient_palette is not None else 'MANUAL'}"),
+            *(([("PWM error", pwm.error)] if pwm is not None and pwm.error else [])),
             ("Drive", f"{s.drivingState} | {signed(s.guidanceCorrection, 2)} {s.guidanceReason}"),
             (
                 "Light",
