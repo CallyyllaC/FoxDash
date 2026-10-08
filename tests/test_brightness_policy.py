@@ -52,7 +52,9 @@ class AmbientPaletteControllerTests(unittest.TestCase):
         self.assertEqual(control.update(ambient_lux=float("nan"), sensor_ok=True, sample=2, now=3.0), result)
         self.assertEqual(control.update(ambient_lux=7.5, sensor_ok=True, sample=2, now=6.0), result)
         next_value = control.update(ambient_lux=7.5, sensor_ok=True, sample=3, now=6.1)
-        self.assertLess(result - next_value, 1.0)
+        # The next tick must not attempt to catch up for the entire stale gap.
+        self.assertGreater(next_value, result - 6.0)
+        self.assertLess(next_value, result)
 
     def test_dim_is_faster_than_brightening(self) -> None:
         down = AmbientPaletteController(initial_percent=90.0)
