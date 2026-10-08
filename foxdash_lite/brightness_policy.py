@@ -12,15 +12,20 @@ class BrightnessLevels:
 
 
 class BrightnessPolicy:
-    """Provisional daylight curve with a usable, notably dimmer night end.
+    """Provisional bounded curve with explicit dark/day calibration anchors.
 
-    Logarithmic lux scaling with a gamma term gives dark conditions more of the
-    low PWM range. Real endpoints must be tuned after mounting the sensor.
+    Under a box the sensor can still report several lux, so tying the minimum
+    output to the impossible goal of exactly zero lux makes the minimum
+    unreachable. These conservative test thresholds must be tuned after
+    mounting the BH1750 in the vehicle.
     """
 
-    DAYLIGHT_LUX = 1000.0
-    UI_NIGHT_PERCENT = 10.0
-    UI_LUX_GAMMA = 1.6
+    # Normal dashboard uses the whole calibrated 1..100% palette / PWM 6..56.
+    UI_DARK_LUX = 20.0
+    UI_DAY_LUX = 400.0
+    UI_NIGHT_PERCENT = 1.0
+    # LED curve is independent and unchanged by the dashboard endpoints.
+    LED_DAYLIGHT_LUX = 1000.0
     LED_NIGHT_PERCENT = 8.0
     LED_DAY_PERCENT = 65.0
 
@@ -28,12 +33,17 @@ class BrightnessPolicy:
         if ambient_lux is None or not math.isfinite(ambient_lux) or ambient_lux < 0:
             return BrightnessLevels(ui_percent=80.0, led_percent=35.0, palette_mode="fallback")
 
-        amount = math.log1p(min(ambient_lux, self.DAYLIGHT_LUX)) / math.log1p(self.DAYLIGHT_LUX)
-        # Reserve most of the visual brightness for useful daylight, not a
-        # single-digit-lux room. UI/PWM share this same normalised factor.
-        ui_amount = amount ** self.UI_LUX_GAMMA
+        # Clip first so a dim but nonzero BH1750 reading reaches *exactly*
+        # the manual minimum (PWM 6); bright daylight reaches PWM 56.
+        light = max(self.UI_DARK_LUX, min(ambient_lux, self.UI_DAY_LUX))
+        low = math.log1p(self.UI_DARK_LUX)
+        high = math.log1p(self.UI_DAY_LUX)
+        ui_amount = (math.log1p(light) - low) / (high - low)
         ui = self.UI_NIGHT_PERCENT + (100.0 - self.UI_NIGHT_PERCENT) * ui_amount
-        led = self.LED_NIGHT_PERCENT + (self.LED_DAY_PERCENT - self.LED_NIGHT_PERCENT) * amount
+
+        # LEDs retain their independent provisional scaling and brightness.
+        led_amount = math.log1p(min(ambient_lux, self.LED_DAYLIGHT_LUX)) / math.log1p(self.LED_DAYLIGHT_LUX)
+        led = self.LED_NIGHT_PERCENT + (self.LED_DAY_PERCENT - self.LED_NIGHT_PERCENT) * led_amount
         mode = "night" if ambient_lux < 10.0 else "dusk" if ambient_lux < 80.0 else "day"
         return BrightnessLevels(ui_percent=ui, led_percent=led, palette_mode=mode)
 
@@ -55,6 +65,7 @@ class AmbientPaletteController:
         self._last_sample: int | None = None
         self._last_sample_at: float | None = None
         self._last_tick_at: float | None = None
+        self.target_percent: float | None = None
 
     @property
     def has_measurement(self) -> bool:
@@ -83,6 +94,7 @@ class AmbientPaletteController:
             return self.current_percent
 
         target = self.policy.resolve(ambient_lux).ui_percent
+        self.target_percent = target
         difference = target - self.current_percent
         rate = self.RISE_PERCENT_PER_S if difference > 0 else self.FALL_PERCENT_PER_S
         movement = min(abs(difference), rate * elapsed)

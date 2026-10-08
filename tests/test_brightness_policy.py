@@ -4,9 +4,21 @@ import math
 import unittest
 
 from foxdash_lite.brightness_policy import AmbientPaletteController, BrightnessPolicy
+from foxdash_lite.linked_brightness import pwm_for_palette
 
 
 class BrightnessPolicyTests(unittest.TestCase):
+    def test_dark_and_day_lux_reach_both_hardware_endpoints(self) -> None:
+        policy = BrightnessPolicy()
+        for lux in (0, 7.5, 12, 20):
+            with self.subTest(lux=lux):
+                self.assertEqual(policy.resolve(lux).ui_percent, 1.0)
+                self.assertEqual(pwm_for_palette(policy.resolve(lux).ui_percent), 6)
+        for lux in (400, 1000, 5632.5):
+            with self.subTest(lux=lux):
+                self.assertEqual(policy.resolve(lux).ui_percent, 100.0)
+                self.assertEqual(pwm_for_palette(policy.resolve(lux).ui_percent), 56)
+
     def test_missing_and_invalid_readings_use_legacy_fallback(self) -> None:
         policy = BrightnessPolicy()
         for value in (None, -1.0, float("nan"), float("inf")):
@@ -19,15 +31,19 @@ class BrightnessPolicyTests(unittest.TestCase):
     def test_night_through_day_is_continuous_bounded_and_monotonic(self) -> None:
         policy = BrightnessPolicy()
         values = [policy.resolve(lux) for lux in (0, 1, 7.5, 80, 400, 1000, 5632.5)]
-        self.assertEqual(values[0].ui_percent, 10.0)
+        self.assertEqual(values[0].ui_percent, 1.0)
         self.assertEqual(values[-1].ui_percent, 100.0)
         self.assertEqual(values[-2].ui_percent, values[-1].ui_percent)
-        self.assertTrue(all(10 <= v.ui_percent <= 100 for v in values))
+        self.assertTrue(all(1 <= v.ui_percent <= 100 for v in values))
         self.assertTrue(all(8 <= v.led_percent <= 65 for v in values))
         self.assertTrue(all(a.ui_percent <= b.ui_percent for a, b in zip(values, values[1:])))
         self.assertGreater(policy.resolve(400).ui_percent, policy.resolve(7.5).ui_percent)
-        self.assertLess(policy.resolve(7.5).ui_percent, 30.0)  # dim night room
-        self.assertGreater(policy.resolve(400).ui_percent, 70.0)  # usable daylight
+        self.assertEqual(policy.resolve(7.5).ui_percent, 1.0)
+        self.assertEqual(policy.resolve(20.0).ui_percent, 1.0)
+        self.assertEqual(policy.resolve(400.0).ui_percent, 100.0)
+        self.assertEqual(policy.resolve(1000.0).ui_percent, 100.0)
+        self.assertGreater(policy.resolve(80.0).ui_percent, 35.0)
+        self.assertLess(policy.resolve(80.0).ui_percent, 55.0)
         self.assertTrue(math.isfinite(policy.resolve(7.5).ui_percent))
 
 
@@ -55,6 +71,18 @@ class AmbientPaletteControllerTests(unittest.TestCase):
         # The next tick must not attempt to catch up for the entire stale gap.
         self.assertGreater(next_value, result - 6.0)
         self.assertLess(next_value, result)
+
+    def test_target_is_exposed_for_distinguishing_slew_and_curve(self) -> None:
+        control = AmbientPaletteController(initial_percent=100.0)
+        self.assertIsNone(control.target_percent)
+        control.update(ambient_lux=10.0, sensor_ok=True, sample=1, now=0.0)
+        self.assertEqual(control.target_percent, 1.0)
+        self.assertEqual(control.current_percent, 100.0)
+        control.update(ambient_lux=10.0, sensor_ok=True, sample=2, now=0.5)
+        self.assertLess(control.current_percent, 100.0)
+        self.assertEqual(control.target_percent, 1.0)
+        control.update(ambient_lux=None, sensor_ok=False, sample=2, now=1.0)
+        self.assertEqual(control.target_percent, 1.0)
 
     def test_dim_is_faster_than_brightening(self) -> None:
         down = AmbientPaletteController(initial_percent=90.0)
