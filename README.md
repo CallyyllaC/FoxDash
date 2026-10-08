@@ -68,6 +68,12 @@ On the Raspberry Pi, set the environment up once and then run live:
 
 Live session logs are written to `~/CarOBD/logs` by default. That data directory is intentionally not part of the repository.
 
+### Provisional ambient palette (Pi)
+
+The Pi visible dashboard launcher enables `--enable-ambient-brightness`. The BH1750 on I²C bus 11 (`0x23`) controls **dashboard palette colours** and the optional RGBW LED intensity, using a bounded logarithmic lux curve. It **does not** adjust the HyperPixel hardware backlight. The lux sensor itself remains independently logged in `psa_ambient_light_*.csv` for later tuning after installation.
+
+Press `d` to inspect raw/filtered lux and the current `Palette ... AUTO` percentage. `[` and `]` manually adjust the palette and disable automatic palette control until FoxDash is restarted. Remove `--enable-ambient-brightness` from the launcher to revert to manual/default colours and LED intensity. Invalid or stale sensor readings hold the last palette setting.
+
 ## Notes
 
 FoxDash is a personal project built around one vehicle, its PSA SID807 ECU, and its hardware setup. The code is public because the project is useful to document and develop in the open, not because it is intended to be a universal OBD dashboard package.
