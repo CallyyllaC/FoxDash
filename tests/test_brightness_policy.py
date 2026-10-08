@@ -4,9 +4,21 @@ import math
 import unittest
 
 from foxdash_lite.brightness_policy import AmbientPaletteController, BrightnessPolicy
+from foxdash_lite.linked_brightness import pwm_for_palette
 
 
 class BrightnessPolicyTests(unittest.TestCase):
+    def test_dark_and_day_lux_reach_both_hardware_endpoints(self) -> None:
+        policy = BrightnessPolicy()
+        for lux in (0, 7.5, 12, 20):
+            with self.subTest(lux=lux):
+                self.assertEqual(policy.resolve(lux).ui_percent, 1.0)
+                self.assertEqual(pwm_for_palette(policy.resolve(lux).ui_percent), 6)
+        for lux in (400, 1000, 5632.5):
+            with self.subTest(lux=lux):
+                self.assertEqual(policy.resolve(lux).ui_percent, 100.0)
+                self.assertEqual(pwm_for_palette(policy.resolve(lux).ui_percent), 56)
+
     def test_missing_and_invalid_readings_use_legacy_fallback(self) -> None:
         policy = BrightnessPolicy()
         for value in (None, -1.0, float("nan"), float("inf")):
