@@ -18,12 +18,6 @@ run_dashboard() {
 
     cd "$PROJECT_DIR" || return 1
 
-    if ! bash "$PROJECT_DIR/scripts/linux/ensure_env.sh"; then
-        echo "$(date -Is) ERROR: FoxDash dependency check failed" | tee -a "$RUNNER_LOG"
-        read -r -p "Press Enter to close... " _
-        return 1
-    fi
-
     echo "$(date -Is) FoxDash visible runtime starting" | tee -a "$RUNNER_LOG"
     "$PYTHON_BIN" -u -m foxdash_lite run --source live --refresh-hz 10 --enable-leds
     rc=$?
