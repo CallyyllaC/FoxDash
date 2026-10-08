@@ -281,7 +281,7 @@ class FoxDashApp(App[None]):
         dark, bright = self._PALETTE[card][part]
         return self._palette_mix(dark, bright)
 
-    def set_ui_brightness(self, percent: float) -> None:
+    def set_ui_brightness(self, percent: float, *, update_cards: bool = True) -> None:
         """Set UI palette brightness from a future ambient-light controller.
 
         The display/backlight itself remains hardware-owned. This only lerps the
@@ -292,7 +292,7 @@ class FoxDashApp(App[None]):
             return
         self._ui_brightness = value
         self._apply_base_chrome()
-        if self._last_snapshot is not None:
+        if update_cards and self._last_snapshot is not None:
             self._apply_card_alert_styles(self._last_snapshot)
 
     def action_dim_ui(self) -> None:
@@ -389,7 +389,7 @@ class FoxDashApp(App[None]):
                 sensor_ok=environment.sensor_ok and environment.light_state == "measuring",
                 sample=environment.sample,
                 now=time.monotonic(),
-            ))
+            ), update_cards=False)
         snap = state.telemetry
         self._last_snapshot = snap
         trend_key = (snap.sample, snap.timestamp)
