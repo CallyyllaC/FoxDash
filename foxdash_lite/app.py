@@ -35,6 +35,7 @@ from .formatting import (
     value_delta_text,
     value_delta_percent_text,
 )
+from .brightness_policy import AmbientPaletteController
 from .runtime_types import EnvironmentSnapshot
 from .state_store import DashboardStateStore
 from .telemetry import TelemetrySnapshot
@@ -159,6 +160,7 @@ class FoxDashApp(App[None]):
         layout_mode: str = "compact",
         emoji_mode: bool = False,
         ui_brightness: float = 100.0,
+        use_ambient_brightness: bool = False,
     ) -> None:
         super().__init__()
         self.state_store = state_store
@@ -177,6 +179,10 @@ class FoxDashApp(App[None]):
         self._dpf_thermal_alpha = 0.22
         self._feedback_classes = ("feedback-good", "feedback-caution", "feedback-alert")
         self._ui_brightness = self._clamp_brightness(ui_brightness)
+        self._ambient_palette = (
+            AmbientPaletteController(initial_percent=self._ui_brightness)
+            if use_ambient_brightness else None
+        )
         self.ui_text = UiText.load()
 
     def compose(self) -> ComposeResult:
@@ -290,9 +296,12 @@ class FoxDashApp(App[None]):
             self._apply_card_alert_styles(self._last_snapshot)
 
     def action_dim_ui(self) -> None:
+        # Manual key input takes over until the next dashboard launch.
+        self._ambient_palette = None
         self.set_ui_brightness(self._ui_brightness - 10.0)
 
     def action_brighten_ui(self) -> None:
+        self._ambient_palette = None
         self.set_ui_brightness(self._ui_brightness + 10.0)
 
     def _apply_base_chrome(self) -> None:
@@ -373,6 +382,14 @@ class FoxDashApp(App[None]):
 
     def refresh_dashboard(self) -> None:
         state = self.state_store.latest()
+        if self._ambient_palette is not None:
+            environment = state.environment
+            self.set_ui_brightness(self._ambient_palette.update(
+                ambient_lux=environment.ambient_lux_filtered,
+                sensor_ok=environment.sensor_ok and environment.light_state == "measuring",
+                sample=environment.sample,
+                now=time.monotonic(),
+            ))
         snap = state.telemetry
         self._last_snapshot = snap
         trend_key = (snap.sample, snap.timestamp)
@@ -902,6 +919,7 @@ class FoxDashApp(App[None]):
             ("Timestamp", s.timestamp),
             ("Session", f"{s.sessionId or '--'} | boot {s.bootId[:8] if s.bootId else '--'}"),
             ("Score", f"{fmt(s.scoreConfidence, 0)}% | {s.scoreReason}"),
+            ("Palette", f"{self._ui_brightness:.1f}% | {'AUTO' if self._ambient_palette is not None else 'MANUAL'} | colours only"),
             ("Drive", f"{s.drivingState} | {signed(s.guidanceCorrection, 2)} {s.guidanceReason}"),
             (
                 "Light",
