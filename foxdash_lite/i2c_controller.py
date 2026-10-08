@@ -19,7 +19,8 @@ BH1750_HIGH_RESOLUTION_MAX_WAIT_S = 0.18
 DEFAULT_I2C_BUS = 11
 DEFAULT_BH1750_ADDRESS = 0x23
 DEFAULT_POLL_INTERVAL_S = 1.0
-DEFAULT_FILTER_TAU_S = 6.0
+DEFAULT_FILTER_TAU_S = 3.0
+DEFAULT_DARKENING_TAU_S = 0.6
 
 
 class I2cController:
@@ -30,9 +31,9 @@ class I2cController:
     - ``ambient_lux_filtered`` is a gentle time-based EMA reserved for future
       palette/LED control.
 
-    FoxDash currently *logs* both values but does not enable ambient-driven
-    brightness automatically. Calibration comes after real in-car data, not
-    after a phone-torch experiment and a burst of misplaced confidence.
+    Filtering is deliberately asymmetric: fast response to darkness (tunnels)
+    and slower response to brighter light (headlights and street lamps). Raw
+    readings remain unaffected so mounted-car calibration can use real data.
     """
 
     def __init__(
@@ -43,6 +44,7 @@ class I2cController:
         address: int = DEFAULT_BH1750_ADDRESS,
         poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
         filter_tau_s: float = DEFAULT_FILTER_TAU_S,
+        darkening_tau_s: float = DEFAULT_DARKENING_TAU_S,
     ) -> None:
         if bus_number < 0:
             raise ValueError("I²C bus number must be non-negative")
@@ -54,6 +56,9 @@ class I2cController:
         self.address = int(address)
         self.poll_interval_s = max(0.2, float(poll_interval_s))
         self.filter_tau_s = max(0.1, float(filter_tau_s))
+        # Calibration uses its own 0.8 s filter; never make its dim response
+        # slower than the caller-requested filter.
+        self.darkening_tau_s = min(self.filter_tau_s, max(0.1, float(darkening_tau_s)))
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -180,7 +185,8 @@ class I2cController:
             self._filtered_lux = raw_lux
         else:
             elapsed_s = max(0.0, now - previous_at)
-            alpha = 1.0 - math.exp(-elapsed_s / self.filter_tau_s)
+            tau_s = self.darkening_tau_s if raw_lux < previous else self.filter_tau_s
+            alpha = 1.0 - math.exp(-elapsed_s / tau_s)
             self._filtered_lux = previous + ((raw_lux - previous) * alpha)
         self._last_sample_monotonic = now
         return self._filtered_lux

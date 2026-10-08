@@ -12,14 +12,15 @@ class BrightnessLevels:
 
 
 class BrightnessPolicy:
-    """Provisional, bounded daylight curve; tune with mounted-car lux logs.
+    """Provisional daylight curve with a usable, notably dimmer night end.
 
-    log1p spans dim cabins through daylight without letting a brief headlight
-    or torch reading define the whole useful range.
+    Logarithmic lux scaling with a gamma term gives dark conditions more of the
+    low PWM range. Real endpoints must be tuned after mounting the sensor.
     """
 
     DAYLIGHT_LUX = 1000.0
-    UI_NIGHT_PERCENT = 25.0
+    UI_NIGHT_PERCENT = 10.0
+    UI_LUX_GAMMA = 1.6
     LED_NIGHT_PERCENT = 8.0
     LED_DAY_PERCENT = 65.0
 
@@ -28,23 +29,25 @@ class BrightnessPolicy:
             return BrightnessLevels(ui_percent=80.0, led_percent=35.0, palette_mode="fallback")
 
         amount = math.log1p(min(ambient_lux, self.DAYLIGHT_LUX)) / math.log1p(self.DAYLIGHT_LUX)
-        ui = self.UI_NIGHT_PERCENT + (100.0 - self.UI_NIGHT_PERCENT) * amount
+        # Reserve most of the visual brightness for useful daylight, not a
+        # single-digit-lux room. UI/PWM share this same normalised factor.
+        ui_amount = amount ** self.UI_LUX_GAMMA
+        ui = self.UI_NIGHT_PERCENT + (100.0 - self.UI_NIGHT_PERCENT) * ui_amount
         led = self.LED_NIGHT_PERCENT + (self.LED_DAY_PERCENT - self.LED_NIGHT_PERCENT) * amount
         mode = "night" if ambient_lux < 10.0 else "dusk" if ambient_lux < 80.0 else "day"
         return BrightnessLevels(ui_percent=ui, led_percent=led, palette_mode=mode)
 
 
 class AmbientPaletteController:
-    """Slew-limited brightness factor for linked palette and HyperPixel PWM.
+    """Asymmetric slew-limited palette and HyperPixel PWM factor.
 
-    The BH1750 filter smooths the lux reading; this additional rate limit
-    prevents abrupt visual changes. Missing, faulty or stale samples hold
-    the last factor for both outputs until a fresh sensor sample arrives.
+    Dim quickly on sudden darkness such as tunnels; brighten more gently to
+    avoid headlight-induced glare. Faulty/stale sensors hold the last level.
     """
 
     SENSOR_TIMEOUT_S = 4.0
-    RISE_PERCENT_PER_S = 12.0
-    FALL_PERCENT_PER_S = 7.0
+    RISE_PERCENT_PER_S = 28.0
+    FALL_PERCENT_PER_S = 55.0
 
     def __init__(self, *, initial_percent: float = 100.0) -> None:
         self.current_percent = max(1.0, min(100.0, float(initial_percent)))
