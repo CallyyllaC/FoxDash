@@ -25,3 +25,4 @@ Thumbs.db
 *.zip
 /backup
 /website-export/
+deploy/raspberry-pi/run_dashboard_visible.sh.before-fastboot
