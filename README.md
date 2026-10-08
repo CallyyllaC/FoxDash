@@ -68,11 +68,13 @@ On the Raspberry Pi, set the environment up once and then run live:
 
 Live session logs are written to `~/CarOBD/logs` by default. That data directory is intentionally not part of the repository.
 
-### Provisional ambient palette (Pi)
+### Provisional linked ambient brightness (Pi)
 
-The Pi visible dashboard launcher enables `--enable-ambient-brightness`. The BH1750 on I²C bus 11 (`0x23`) controls **dashboard palette colours** and the optional RGBW LED intensity, using a bounded logarithmic lux curve. It **does not** adjust the HyperPixel hardware backlight. The lux sensor itself remains independently logged in `psa_ambient_light_*.csv` for later tuning after installation.
+The Pi visible dashboard launcher enables `--enable-ambient-brightness`. The BH1750 on I²C bus 11 (`0x23`) controls **dashboard palette colours AND HyperPixel PWM backlight**, using one bounded logarithmic lux factor, plus optional RGBW LED intensity. The palette and PWM share the same normalised factor: palette 1–100% maps to the experimentally usable backlight range **6–56**, not the hardware's advertised 0–255. Backlight changes are handled on a separate worker at most ~3 times per second, to avoid blocking the Textual UI on sudo/sysfs writes. The preliminary curve starts around palette 25% / PWM 18 at 0 lux and reaches palette 100% / PWM 56 at 1,000 lux. These endpoints are provisional pending mounted-car calibration.
 
-Press `d` to inspect raw/filtered lux and the current `Palette ... AUTO` percentage. `[` and `]` manually adjust the palette and disable automatic palette control until FoxDash is restarted. Remove `--enable-ambient-brightness` from the launcher to revert to manual/default colours and LED intensity. Invalid or stale sensor readings hold the last palette setting.
+Run `sudo ./scripts/linux/setup_backlight_control.sh` once on the HyperPixel Pi to grant only the limited passwordless backlight write permission. The ambient CSV logs (`psa_ambient_light_*.csv`) remain independent and unchanged. The UI and logs continue to work if PWM control is unavailable; the debug panel shows the error.
+
+Press `d` to inspect raw/filtered lux and current `Brightness ... palette | PWM actual/target | AUTO`. The `[` and `]` keys override *both* the palette and the PWM together until restart (LED ambient control remains separate). Remove `--enable-ambient-brightness` from the launcher to return to the previous palette/LED behaviour, with no automatic PWM writes. Invalid or stale readings preserve the last linked brightness; no PWM adjustment is attempted until the first valid sensor reading.
 
 ## Notes
 
