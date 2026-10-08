@@ -56,6 +56,16 @@ class AmbientPaletteControllerTests(unittest.TestCase):
         control = AmbientPaletteController(initial_percent=100.0)
         self.assertEqual(control.update(ambient_lux=None, sensor_ok=False, sample=0, now=100), 100.0)
 
+    def test_hardware_remains_idle_until_first_valid_sensor_sample(self) -> None:
+        control = AmbientPaletteController(initial_percent=100.0)
+        self.assertFalse(control.has_measurement)
+        control.update(ambient_lux=None, sensor_ok=False, sample=0, now=0.0)
+        self.assertFalse(control.has_measurement)
+        control.update(ambient_lux=7.5, sensor_ok=True, sample=1, now=1.0)
+        self.assertTrue(control.has_measurement)
+        control.update(ambient_lux=None, sensor_ok=False, sample=1, now=2.0)
+        self.assertTrue(control.has_measurement)
+
 
 if __name__ == "__main__":
     unittest.main()
