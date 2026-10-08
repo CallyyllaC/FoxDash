@@ -39,7 +39,7 @@ def main() -> int:
     run.add_argument(
         "--enable-ambient-brightness",
         action="store_true",
-        help="Enable provisional ambient-lux control of UI palette colours and LED intensity (never screen PWM).",
+        help="Enable linked ambient-lux dashboard palette, HyperPixel PWM backlight and LED intensity.",
     )
 
     calibrate = sub.add_parser("ambient-calibrate", help="Manually tune the real HyperPixel backlight against live BH1750 readings")
@@ -133,6 +133,7 @@ def main() -> int:
     try:
         app.run()
     finally:
+        app.stop_brightness_output()
         runtime.stop()
     return 0
 

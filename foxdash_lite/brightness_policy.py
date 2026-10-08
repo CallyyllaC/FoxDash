@@ -35,11 +35,11 @@ class BrightnessPolicy:
 
 
 class AmbientPaletteController:
-    """Slew-limited UI palette control. Does not touch the physical backlight.
+    """Slew-limited brightness factor for linked palette and HyperPixel PWM.
 
-    The BH1750's own filter smooths the readings; this extra rate limit prevents
-    abrupt visible changes. Missing, faulty or stale readings preserve the last
-    palette instead of suddenly switching to a fallback while driving.
+    The BH1750 filter smooths the lux reading; this additional rate limit
+    prevents abrupt visual changes. Missing, faulty or stale samples hold
+    the last factor for both outputs until a fresh sensor sample arrives.
     """
 
     SENSOR_TIMEOUT_S = 4.0
@@ -52,6 +52,11 @@ class AmbientPaletteController:
         self._last_sample: int | None = None
         self._last_sample_at: float | None = None
         self._last_tick_at: float | None = None
+
+    @property
+    def has_measurement(self) -> bool:
+        """Prevent physical PWM writes until at least one valid lux sample."""
+        return self._last_sample_at is not None
 
     def update(
         self,
