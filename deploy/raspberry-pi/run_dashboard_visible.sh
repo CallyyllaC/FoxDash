@@ -19,7 +19,7 @@ run_dashboard() {
     cd "$PROJECT_DIR" || return 1
 
     echo "$(date -Is) FoxDash visible runtime starting" | tee -a "$RUNNER_LOG"
-    "$PYTHON_BIN" -u -m foxdash_lite run --source live --refresh-hz 10 --enable-leds
+    "$PYTHON_BIN" -u -m foxdash_lite run --source live --refresh-hz 10 --enable-leds --enable-ambient-brightness
     rc=$?
 
     echo "$(date -Is) FoxDash exited with code ${rc}" | tee -a "$RUNNER_LOG"
