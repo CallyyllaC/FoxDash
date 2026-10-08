@@ -933,6 +933,11 @@ class FoxDashApp(App[None]):
             f"/{pwm.target_pwm if pwm.target_pwm is not None else '--'}"
             if pwm is not None else ""
         )
+        goal = (
+            f"{self._ambient_palette.target_percent:.1f}%"
+            if self._ambient_palette is not None and self._ambient_palette.target_percent is not None
+            else "--"
+        )
         fields: list[tuple[str, Any]] = [
             ("Keys", "q quit | d debug | [ dim | ] brighten"),
             ("Source", self.state_store.latest().source_name),
@@ -942,7 +947,7 @@ class FoxDashApp(App[None]):
             ("Timestamp", s.timestamp),
             ("Session", f"{s.sessionId or '--'} | boot {s.bootId[:8] if s.bootId else '--'}"),
             ("Score", f"{fmt(s.scoreConfidence, 0)}% | {s.scoreReason}"),
-            ("Brightness", f"{self._ui_brightness:.1f}% palette{pwm_text} | {'AUTO' if self._ambient_palette is not None else 'MANUAL'}"),
+            ("Brightness", f"palette {self._ui_brightness:.1f}% / target {goal} {pwm_text} | {'AUTO' if self._ambient_palette is not None else 'MANUAL'}"),
             *(([("PWM error", pwm.error)] if pwm is not None and pwm.error else [])),
             ("Drive", f"{s.drivingState} | {signed(s.guidanceCorrection, 2)} {s.guidanceReason}"),
             (
