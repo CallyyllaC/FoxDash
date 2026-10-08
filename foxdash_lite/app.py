@@ -684,15 +684,14 @@ class FoxDashApp(App[None]):
         text.append(self._regen_remaining_text(s), style="bold white")
         text.append(" | Eolys ", style="dim")
         if isinstance(s.fapAdditivePercent, (int, float)):
-            text.append(f"~{s.fapAdditivePercent:.0f}%", style="bold cyan")
+            text.append(f"{s.fapAdditivePercent:.0f}%", style="bold cyan")
         elif isinstance(s.fapAdditiveRemain, (int, float)):
             text.append(f"{s.fapAdditiveRemain:.0f}mL", style="bold cyan")
         else:
             text.append("--", style="dim")
         if isinstance(s.fapLifeLeft_mi, (int, float)):
-            text.append(" (", style="dim")
+            text.append(" DPF ", style="dim")
             text.append(self._miles_compact(s.fapLifeLeft_mi), style="bold white")
-            text.append(")", style="dim")
         return text
 
     def _three_line_hero(
@@ -921,7 +920,7 @@ class FoxDashApp(App[None]):
             ("Mixer", f"{fmt(s.airMixerActual)}/{fmt(s.airMixerTarget)} err {signed(s.airMixerError)}"),
             ("FAP", f"{fmt(s.dpfSoot, 3)}g {s.dpfStatus}{s.dpfTrendArrow} temp {fmt(s.fapTemp)}°C diff {fmt_pressure(s.dpfDiffProxy)}"),
             ("Regen", f"last {fmt(s.lastRegen_mi)} mi | avg {fmt(s.avg10Regen_mi)} mi | life {fmt(s.fapLifeLeft_mi)} mi"),
-            ("Additive", f"used {fmt(s.fapAdditiveVol)} mL | remain {fmt(s.fapAdditiveRemain)} mL | est {fmt(s.fapAdditivePercent)}%"),
+            ("Additive", f"full {fmt(s.fapAdditiveVol)} mL | remain {fmt(s.fapAdditiveRemain)} mL | est {fmt(s.fapAdditivePercent)}%"),
             ("Inj corr", f"{signed(s.inj1FlowCorr,2)} {signed(s.inj2FlowCorr,2)} {signed(s.inj3FlowCorr,2)} {signed(s.inj4FlowCorr,2)}"),
         ]
         for label, value in fields:

@@ -5,6 +5,7 @@ import unittest
 from foxdash_lite.telemetry_engine import (
     KM_TO_MPS,
     TelemetryRollingState,
+    derive_additive_percent,
     derive_dpf_state,
     derive_driving_state,
     update_rolling_derived,
@@ -12,6 +13,11 @@ from foxdash_lite.telemetry_engine import (
 
 
 class TelemetryEngineCalibrationTests(unittest.TestCase):
+    def test_additive_percent_uses_reported_full_volume(self) -> None:
+        self.assertEqual(derive_additive_percent(940.0, 940.0), 100.0)
+        self.assertAlmostEqual(derive_additive_percent(940.0, 932.0), 99.1489361702, places=6)
+        self.assertIsNone(derive_additive_percent(0.0, 0.0))
+
     def test_acceleration_uses_short_rolling_regression(self) -> None:
         rolling = TelemetryRollingState()
         result = None

@@ -89,6 +89,15 @@ def norm(value: Any, lo: float, hi: float) -> float | None:
     return clamp((v - lo) * 100.0 / (hi - lo), 0.0, 100.0)
 
 
+def derive_additive_percent(volume_ml: Any, remaining_ml: Any) -> float | None:
+    """Return Eolys remaining percentage using the ECU's reported full volume."""
+    volume = parse_float(volume_ml)
+    remaining = parse_float(remaining_ml)
+    if volume is None or remaining is None or volume <= 0:
+        return None
+    return clamp(remaining * 100.0 / volume, 0.0, 100.0)
+
+
 def _flag(value: Any) -> bool:
     parsed = parse_float(value)
     return parsed is not None and parsed > 0.5
@@ -1124,9 +1133,7 @@ class TelemetryEngine:
 
         additive_vol = parse_float(canonical.get("fapAdditiveVol"))
         additive_remain = parse_float(canonical.get("fapAdditiveRemain"))
-        additive_percent = None
-        if additive_vol is not None and additive_remain is not None and additive_vol + additive_remain > 0:
-            additive_percent = additive_remain * 100.0 / (additive_vol + additive_remain)
+        additive_percent = derive_additive_percent(additive_vol, additive_remain)
         values["fapAdditiveVol"] = additive_vol
         values["fapAdditiveRemain"] = additive_remain
         values["fapAdditivePercent"] = additive_percent
