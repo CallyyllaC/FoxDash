@@ -39,7 +39,7 @@ def main() -> int:
     run.add_argument(
         "--enable-ambient-brightness",
         action="store_true",
-        help="Apply ambient lux to LED brightness. Leave off while collecting calibration logs.",
+        help="Enable provisional ambient-lux control of UI palette colours and LED intensity (never screen PWM).",
     )
 
     calibrate = sub.add_parser("ambient-calibrate", help="Manually tune the real HyperPixel backlight against live BH1750 readings")
@@ -128,6 +128,7 @@ def main() -> int:
         layout_mode=args.layout,
         emoji_mode=not args.no_emoji,
         ui_brightness=args.ui_brightness,
+        use_ambient_brightness=args.enable_ambient_brightness,
     )
     try:
         app.run()
