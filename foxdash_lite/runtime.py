@@ -60,6 +60,8 @@ class FoxDashRuntime:
             session_started_at=self.session_started_at,
         )
         self._stop = threading.Event()
+        self._stop_lock = threading.Lock()
+        self._stopped = False
         self._thread: threading.Thread | None = None
         self._reader = None
         self._i2c = I2cController(
@@ -103,6 +105,12 @@ class FoxDashRuntime:
         self._thread.start()
 
     def stop(self) -> None:
+        # Idempotent: the ignition shutdown sequence stops the runtime from the
+        # power worker, and the normal exit path calls this again afterwards.
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
         self._stop.set()
         if self._reader is not None:
             self._reader.stop()

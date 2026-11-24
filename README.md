@@ -76,6 +76,10 @@ Run `sudo ./scripts/linux/setup_backlight_control.sh` once on the HyperPixel Pi 
 
 Press `d` to inspect raw/filtered lux and current `Brightness ... palette/current target | PWM actual/target | AUTO`. The `[` and `]` keys override *both* the palette and the PWM together until restart (LED ambient control remains separate). Remove `--enable-ambient-brightness` from the launcher to return to the previous palette/LED behaviour, with no automatic PWM writes. Invalid or stale readings preserve the last linked brightness; no PWM adjustment is attempted until the first valid sensor reading.
 
+### Ignition detection and graceful shutdown (Pi)
+
+`--enable-power-management` watches the SEENGREAT supercapacitor UPS `DetcVIN` signal on GPIO BCM 10 (HIGH = external power). When external power is lost the driving-cue strip becomes a 60-second countdown. It cancels instantly if power returns. At expiry FoxDash saves its logs, blanks the BlinkStick, dims the backlight and asks the OS to power off. The launcher currently runs it in `--power-dry-run` mode. See [docs/power-management.md](docs/power-management.md) for configuration, permissions, behaviour and the outstanding hardware checklist.
+
 ## Notes
 
 FoxDash is a personal project built around one vehicle, its PSA SID807 ECU, and its hardware setup. The code is public because the project is useful to document and develop in the open, not because it is intended to be a universal OBD dashboard package.

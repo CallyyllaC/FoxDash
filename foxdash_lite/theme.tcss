@@ -43,6 +43,19 @@ Screen {
     background: #19090d;
 }
 
+/* Ignition-off countdown borrows the cue slot: amber while there is time,
+   red for the final seconds and while powering off. Classes only, never
+   inline styles, so cancelling restores the cue's own edge on the next tick. */
+#feedback_bar.feedback-power {
+    border-left: heavy #ffb000;
+    background: #140e04;
+}
+
+#feedback_bar.feedback-power-urgent {
+    border-left: heavy #ff3b30;
+    background: #1c090d;
+}
+
 /* The DPF footer deliberately keeps its own thermal language. The live app
    interpolates its edge/tint colours in Python; these are safe fallback styles
    for first paint and non-live previews. */

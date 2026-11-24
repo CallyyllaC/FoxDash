@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections import deque
 import math
 import time
-from typing import Any, Deque
+from typing import Any, Callable, Deque
 
-from rich.console import RenderableType
+from rich.console import Group, RenderableType
 from rich.align import Align
 from rich.table import Table
 from rich.text import Text
@@ -37,6 +37,7 @@ from .formatting import (
 )
 from .brightness_policy import AmbientPaletteController
 from .linked_brightness import LinkedBacklightOutput
+from .power_manager import PowerState, PowerStatus
 from .runtime_types import EnvironmentSnapshot
 from .state_store import DashboardStateStore
 from .telemetry import TelemetrySnapshot
@@ -162,8 +163,12 @@ class FoxDashApp(App[None]):
         emoji_mode: bool = False,
         ui_brightness: float = 100.0,
         use_ambient_brightness: bool = False,
+        power_status: Callable[[], PowerStatus] | None = None,
     ) -> None:
         super().__init__()
+        # Ignition monitor is read-only from the UI's point of view: one cheap
+        # snapshot per existing refresh tick, no timers or callbacks of its own.
+        self._power_status = power_status
         self.state_store = state_store
         self.refresh_hz = max(1.0, min(refresh_hz, 60.0))
         self.show_debug = False
@@ -178,7 +183,13 @@ class FoxDashApp(App[None]):
         self._bar_alpha = 0.35
         self._dpf_visual_temp: float | None = None
         self._dpf_thermal_alpha = 0.22
-        self._feedback_classes = ("feedback-good", "feedback-caution", "feedback-alert")
+        self._feedback_classes = (
+            "feedback-good",
+            "feedback-caution",
+            "feedback-alert",
+            "feedback-power",
+            "feedback-power-urgent",
+        )
         self._ui_brightness = self._clamp_brightness(ui_brightness)
         self._ambient_palette = (
             AmbientPaletteController(initial_percent=self._ui_brightness)
@@ -409,14 +420,22 @@ class FoxDashApp(App[None]):
                 self._set_linked_brightness(percent, update_cards=False)
         snap = state.telemetry
         self._last_snapshot = snap
+        power = self._power_status() if self._power_status is not None else None
         trend_key = (snap.sample, snap.timestamp)
         if trend_key != self._last_trend_key:
             self.trends.update(snap)
             self._last_trend_key = trend_key
-        self.query_one("#status_bar", Static).update(self.render_status(snap))
+        self.query_one("#status_bar", Static).update(self.render_status(snap, power))
         feedback = self.query_one("#feedback_bar", Static)
-        feedback.update(self.render_feedback(snap))
-        self._apply_feedback_style(feedback, snap)
+        if power is not None and power.state is not PowerState.NORMAL:
+            # The power banner borrows the driving-cue slot: same size, same
+            # edge-lit treatment, no layout shift. When power returns the very
+            # next tick renders the normal cue again; nothing else is touched.
+            feedback.update(self.render_power_banner(power, width=feedback.content_size.width))
+            self._set_feedback_class(feedback, self._power_banner_class(power))
+        else:
+            feedback.update(self.render_feedback(snap))
+            self._apply_feedback_style(feedback, snap)
         dpf = self.query_one("#dpf_bar", Static)
         dpf.update(self.render_dpf(snap))
         self._apply_dpf_temperature_style(dpf, snap.fapTemp)
@@ -429,7 +448,7 @@ class FoxDashApp(App[None]):
         self.query_one("#flow_card", DitherCard).update(self.render_flow_exhaust(snap))
         self._apply_card_alert_styles(snap)
         if self.show_debug:
-            self.query_one("#debug_card", Static).update(self.render_debug(snap, state.environment))
+            self.query_one("#debug_card", Static).update(self.render_debug(snap, state.environment, power))
 
     def _animated_value(self, key: str, target: Any) -> Any:
         if not isinstance(target, (int, float)):
@@ -672,9 +691,65 @@ class FoxDashApp(App[None]):
 
     def _apply_feedback_style(self, widget: Static, s: TelemetrySnapshot) -> None:
         _message, severity = self._feedback(s)
-        active = f"feedback-{severity}"
+        self._set_feedback_class(widget, f"feedback-{severity}")
+
+    def _set_feedback_class(self, widget: Static, active: str) -> None:
+        # Exactly one feedback class at a time, so leaving the power banner
+        # cannot strand its edge colour on the normal driving cue.
         for css_class in self._feedback_classes:
             widget.set_class(css_class == active, css_class)
+
+    _POWER_URGENT_S = 10.0
+
+    def _power_banner_class(self, power: PowerStatus) -> str:
+        urgent = power.state is PowerState.COMMITTED and not power.dry_run
+        if power.remaining_s is not None and power.remaining_s <= self._POWER_URGENT_S:
+            urgent = True
+        return "feedback-power-urgent" if urgent else "feedback-power"
+
+    def render_power_banner(self, power: PowerStatus, *, width: int = 40) -> RenderableType:
+        """Two-row countdown in the driving-cue slot: message, then draining rail."""
+        width = max(10, int(width))
+        headline = Text(justify="center", no_wrap=True, overflow="crop")
+        if power.dry_run:
+            headline.append("DRY RUN · ", style="bold #a4b0ba")
+
+        if power.state is PowerState.PENDING:
+            remaining = power.remaining_s if power.remaining_s is not None else 0.0
+            urgent = remaining <= self._POWER_URGENT_S
+            label_colour = (
+                self._pulse_colour("#8e2730", "#ff7566", period=1.0)
+                if urgent else self._pulse_colour("#a86f00", "#ffc340", period=2.2)
+            )
+            headline.append("EXTERNAL POWER LOST", style=f"bold {label_colour}")
+            headline.append("  ·  ", style="dim")
+            headline.append("shutdown in ", style="#a4b0ba")
+            headline.append(f"{math.ceil(remaining):d}s", style="bold #eefbff")
+            return Group(Align.center(headline), self._power_rail(power.progress, width, urgent=urgent))
+
+        # COMMITTED.
+        if power.dry_run:
+            headline.append("SHUTDOWN WOULD START NOW", style="bold #ffb000")
+            detail = Text("Restore external power to reset the test", style="#a4b0ba", justify="center")
+        else:
+            headline.append("POWERING OFF", style=f"bold {self._pulse_colour('#8e2730', '#ff7566', period=1.6)}")
+            detail = Text(power.detail or "Saving logs", style="#a4b0ba", justify="center")
+        return Group(Align.center(headline), Align.center(detail))
+
+    @staticmethod
+    def _power_rail(fraction: float, width: int, *, urgent: bool) -> Text:
+        """Draining rail drawn like the hero score rails: styled background cells."""
+        fill_colour = "#ff3b30" if urgent else "#ffb000"
+        track_colour = "#2a0b0e" if urgent else "#2a1d05"
+        filled = max(0, min(width, int(math.ceil(max(0.0, min(1.0, fraction)) * width))))
+        rail = Text(no_wrap=True, overflow="crop")
+        if filled:
+            rail.append(" " * (filled - 1), style=f"on {fill_colour}")
+            # The leading cell is a touch brighter so the drain reads as motion.
+            rail.append(" ", style=f"on {'#ff7566' if urgent else '#ffd36a'}")
+        if width - filled:
+            rail.append(" " * (width - filled), style=f"on {track_colour}")
+        return rail
 
     def render_feedback(self, s: TelemetrySnapshot) -> RenderableType:
         key, severity = self._feedback(s)
@@ -686,8 +761,12 @@ class FoxDashApp(App[None]):
         }.get(severity, "bold white")
         return Align.center(Text(message, style=style))
 
-    def render_status(self, s: TelemetrySnapshot) -> RenderableType:
+    def render_status(self, s: TelemetrySnapshot, power: PowerStatus | None = None) -> RenderableType:
         text = Text()
+        if power is not None and power.enabled and not power.gpio_ok and power.gpio_error:
+            # Quiet but honest: the ignition monitor cannot see the UPS signal.
+            text.append("PWR ?", style="bold #ffb000")
+            text.append(" | ", style="dim")
         text.append(f"{fmt(s.batteryV, 1)}V", style="bold cyan")
         if isinstance(s.airCPress_bar, (int, float)):
             text.append(" | ", style="dim")
@@ -923,7 +1002,19 @@ class FoxDashApp(App[None]):
         ))
         return table
 
-    def render_debug(self, s: TelemetrySnapshot, environment: EnvironmentSnapshot) -> RenderableType:
+    @staticmethod
+    def _power_debug_text(power: PowerStatus) -> str:
+        external = {True: "yes", False: "no"}.get(power.external_power, "--")
+        gpio = "gpio ok" if power.gpio_ok else f"gpio {power.gpio_error or 'starting'}"
+        dry = " | DRY RUN" if power.dry_run else ""
+        return f"{power.state.value} | ext {external} | {gpio} | countdown #{power.countdown_id}{dry}"
+
+    def render_debug(
+        self,
+        s: TelemetrySnapshot,
+        environment: EnvironmentSnapshot,
+        power: PowerStatus | None = None,
+    ) -> RenderableType:
         table = Table.grid(expand=True)
         table.add_column(ratio=1, style="dim")
         table.add_column(ratio=3)
@@ -959,6 +1050,7 @@ class FoxDashApp(App[None]):
                 f"{f'0x{environment.sensor_address:02X}' if environment.sensor_address is not None else '--'})"
                 f"{f' | {environment.sensor_error}' if environment.sensor_error else ''}",
             ),
+            *(([("Power", self._power_debug_text(power))] if power is not None else [])),
             ("A/C", f"{fmt_sig(s.airCPress_bar)} bar | session {fmt_sig(s.airCPressSessionMin_bar)}–{fmt_sig(s.airCPressSessionMax_bar)}"),
             ("Boost", f"{fmt_pressure(s.boostProxy)} target {fmt_pressure(s.boostTargetProxy)} delta {signed_pressure(s.boostErrorProxy)}"),
             ("Rail", f"{fmt_pressure(s.railProxy)} target {fmt_pressure(s.railTargetProxy)} delta {signed_pressure(s.railErrorProxy)}"),
