@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from pathlib import Path
+
+import foxdash_lite.app as app_module
 
 from rich.align import Align
 from rich.table import Table
@@ -34,6 +37,8 @@ class RenderKeyTests(unittest.TestCase):
 
 
 class _CountingApp(FoxDashApp):
+    CSS_PATH = str(Path(app_module.__file__).with_name("theme.tcss"))
+
     def set_interval(self, *args, **kwargs):  # drive ticks by hand
         return None
 
