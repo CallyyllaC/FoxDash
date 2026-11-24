@@ -1,0 +1,12 @@
+# FoxDash kiosk session autostart (labwc -C ~/.config/foxdash-kiosk).
+#
+# Order matters:
+# 1. kanshi rotates the HyperPixel to 800x480 landscape (~/.config/kanshi/config)
+#    before anything is drawn, so the background is not redrawn after a turn.
+# 2. swaybg shows the last frame of the boot animation, so the screen goes
+#    straight from Plymouth to the same picture and then to FoxDash, with no
+#    desktop or black gap, also while FoxDash restarts.
+# 3. FoxDash itself.
+/usr/bin/kanshi >/dev/null 2>&1 &
+/usr/bin/swaybg -m fill -c '#0b0b0f' -i "$HOME/.local/share/foxdash/boot-wallpaper.png" >/dev/null 2>&1 &
+/bin/bash "@FOXDASH_DIR@/deploy/raspberry-pi/run_dashboard_visible.sh" >/dev/null 2>&1 &

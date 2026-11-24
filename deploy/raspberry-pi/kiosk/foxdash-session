@@ -1,0 +1,14 @@
+#!/bin/sh
+# FoxDash kiosk session, started by LightDM autologin
+# (/usr/share/wayland-sessions/foxdash-kiosk.desktop).
+#
+# The same compositor as the Raspberry Pi desktop session (labwc), but with
+# its own configuration directory instead of the merged desktop config, so the
+# desktop, panel and file manager are never started.
+
+# Same renderer choice as /usr/bin/labwc-pi.
+if raspi-config nonint is_pi && ! raspi-config nonint gpu_has_mmu ; then
+    export WLR_RENDERER=pixman
+fi
+
+exec /usr/bin/labwc -C "$HOME/.config/foxdash-kiosk"

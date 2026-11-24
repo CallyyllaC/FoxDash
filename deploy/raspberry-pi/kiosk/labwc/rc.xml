@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  FoxDash kiosk session (labwc -C ~/.config/foxdash-kiosk).
+  Only FoxDash is shown: no desktop, no panel, no decorations, no cursor.
+  Installed by deploy/raspberry-pi/install_boot_experience.sh.
+-->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+  </core>
+
+  <windowRules>
+    <!--
+      Match the terminal by app_id only: its title changes while the shell
+      and Python start. ToggleFullscreen runs once, when the window first
+      maps, so FoxDash never appears in a window. HideCursor hides the
+      cursor again in case a client set one; the blank cursor theme keeps it
+      invisible at every other moment.
+    -->
+    <windowRule identifier="lxterminal" serverDecoration="no" skipTaskbar="yes" fixedPosition="yes">
+      <action name="ToggleFullscreen" />
+      <action name="HideCursor" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

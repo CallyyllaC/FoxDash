@@ -14,7 +14,9 @@ no separate watcher script, daemon or root process.
 | Pull | Internal pull-down, requested by FoxDash through libgpiod |
 | Display | HyperPixel 4.0 with `disable-touch`. GPIO 10 is physically isolated from the HyperPixel header |
 
-The launcher and boot config are unchanged apart from the FoxDash flags below.
+Power management itself changes the launcher only by adding the FoxDash flags
+below. The boot screen and kiosk session are separate; see
+[boot-experience.md](boot-experience.md).
 No other GPIO is used.
 
 ## Configuration

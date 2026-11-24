@@ -1,0 +1,81 @@
+# FoxDash boot screen: the Ember Deck boot animation (the awoo logo over the
+# awoo.ltd starfield), adapted from The Ember Deck's emberdeck.script for the
+# HyperPixel 4.0 on a Pi Zero 2 W.
+#
+# Differences from Ember Deck, all for the Zero 2 W and this panel:
+# - Images are pre-sized by tools/build_boot_assets.py, so nothing is scaled
+#   at boot unless the screen is an unexpected size.
+# - The panel scans out 480x800 portrait while FoxDash is shown 800x480
+#   landscape, so on a portrait screen the "-rot" images (turned 90 degrees
+#   clockwise) are used.
+# - The twinkle layers are updated every third frame (about 17 Hz), not every
+#   frame. Each update redraws the whole screen in software, and boot needs
+#   the CPU more than the twinkle needs the frame rate.
+# - No boot-message or password text: FoxDash boots quiet and unencrypted,
+#   and rotated text would be clipped by Plymouth.
+
+Window.SetBackgroundTopColor(0.043, 0.043, 0.059);
+Window.SetBackgroundBottomColor(0.043, 0.043, 0.059);
+
+screen_x = Window.GetX();
+screen_y = Window.GetY();
+screen_w = Window.GetWidth();
+screen_h = Window.GetHeight();
+
+if (screen_w < screen_h)
+    suffix = "-rot";
+else
+    suffix = "";
+
+fun load(name) {
+    return Image(name + suffix + ".png");
+}
+
+fun full_screen(name, z) {
+    image = load(name);
+    if (image.GetWidth() != screen_w || image.GetHeight() != screen_h)
+        image = image.Scale(screen_w, screen_h);
+    sprite = Sprite(image);
+    sprite.SetPosition(screen_x, screen_y, z);
+    return sprite;
+}
+
+stars = full_screen("stars", -30);
+twinkle_far = full_screen("twinkle_far", -20);
+twinkle_mid = full_screen("twinkle_mid", -20);
+twinkle_near = full_screen("twinkle_near", -20);
+
+# Same proportion as Ember Deck: 55% of the shorter side, centred on display 0.
+logo_size = Math.Int(Math.Min(Window.GetWidth(0), Window.GetHeight(0)) * 0.55);
+logo_x = Window.GetX(0) + Math.Int((Window.GetWidth(0) - logo_size) / 2);
+logo_y = Window.GetY(0) + Math.Int((Window.GetHeight(0) - logo_size) / 2);
+
+fun logo(name, z) {
+    image = load(name);
+    if (image.GetWidth() != logo_size)
+        image = image.Scale(logo_size, logo_size);
+    sprite = Sprite(image);
+    sprite.SetPosition(logo_x, logo_y, z);
+    sprite.SetOpacity(0);
+    return sprite;
+}
+
+crescent = logo("crescent", 10);
+mask = logo("mask", 11);
+
+# Refresh runs about 50 times a second. Timing matches Ember Deck: the
+# crescent fades in over 45 ticks, the mask starts 25 ticks later.
+tick = 0;
+fun refresh_callback() {
+    tick++;
+    if (tick <= 71) {
+        crescent.SetOpacity(Math.Clamp(tick / 45, 0, 1));
+        mask.SetOpacity(Math.Clamp((tick - 25) / 45, 0, 1));
+    }
+    if (tick % 3 == 0) {
+        twinkle_far.SetOpacity(0.55 + 0.45 * Math.Sin(tick / 41));
+        twinkle_mid.SetOpacity(0.55 + 0.45 * Math.Sin(tick / 29 + 2.1));
+        twinkle_near.SetOpacity(0.55 + 0.45 * Math.Sin(tick / 23 + 4.2));
+    }
+}
+Plymouth.SetRefreshFunction(refresh_callback);

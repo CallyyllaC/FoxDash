@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=FoxDash
+Description=The Ember Deck boot screen (awoo logo over the awoo.ltd starfield), adapted for the FoxDash HyperPixel 4.0.
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/foxdash
+ScriptFile=/usr/share/plymouth/themes/foxdash/foxdash.script

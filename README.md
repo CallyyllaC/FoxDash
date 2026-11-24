@@ -80,6 +80,10 @@ Press `d` to inspect raw/filtered lux and current `Brightness ... palette/curren
 
 `--enable-power-management` watches the SEENGREAT supercapacitor UPS `DetcVIN` signal on GPIO BCM 10 (HIGH = external power). When external power is lost the driving-cue strip becomes a 60-second countdown. It cancels instantly if power returns. At expiry FoxDash saves its logs, blanks the BlinkStick, dims the backlight and asks the OS to power off. The launcher currently runs it in `--power-dry-run` mode. See [docs/power-management.md](docs/power-management.md) for configuration, permissions, behaviour and the outstanding hardware checklist.
 
+### Boot screen and kiosk session (Pi)
+
+`sudo deploy/raspberry-pi/install_boot_experience.sh` installs the Ember Deck boot animation as the `foxdash` Plymouth theme (rotated for the HyperPixel), quietens the kernel boot, and switches LightDM to a **FoxDash Kiosk** labwc session: no desktop, panel, window borders or mouse cursor. The last boot frame stays behind the dashboard while it starts or restarts. `--uninstall` restores the Raspberry Pi desktop. See [docs/boot-experience.md](docs/boot-experience.md).
+
 ## Notes
 
 FoxDash is a personal project built around one vehicle, its PSA SID807 ECU, and its hardware setup. The code is public because the project is useful to document and develop in the open, not because it is intended to be a universal OBD dashboard package.

@@ -3,3 +3,6 @@
 
 # Raspberry Pi/Linux scripts must remain directly executable and use Unix line endings.
 *.sh text eol=lf
+# Pi boot/kiosk files (Plymouth theme, labwc config, session script) are read on Linux.
+deploy/raspberry-pi/** text=auto eol=lf
+*.png binary

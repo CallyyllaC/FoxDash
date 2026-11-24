@@ -1,0 +1,15 @@
+# FoxDash kiosk session environment (labwc -C ~/.config/foxdash-kiosk).
+XKB_DEFAULT_MODEL=pc105
+XKB_DEFAULT_LAYOUT=gb
+
+# Every cursor name resolves to a fully transparent 1x1 image, from the moment
+# labwc starts. Clients (lxterminal/GTK) inherit the same theme.
+XCURSOR_THEME=foxdash-blank
+XCURSOR_SIZE=24
+
+# Same as the Raspberry Pi desktop session.
+QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+WLR_DRM_FORCE_LIBLIFTOFF=1
+
+# Marks the session for the FoxDash launcher: restart in place, never prompt.
+FOXDASH_KIOSK=1
