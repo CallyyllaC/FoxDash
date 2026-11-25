@@ -44,6 +44,65 @@ from .telemetry import TelemetrySnapshot
 from .ui_text import UiText
 
 
+def render_key(renderable: Any) -> Any:
+    """Cheap structural key for the Rich renderables the dashboard builds.
+
+    Two renderables with equal keys paint identical cells at the same size, so
+    an unchanged card can skip Textual's (comparatively expensive) re-render.
+    Anything unrecognised gets a fresh sentinel and therefore always updates.
+    """
+    if isinstance(renderable, str):
+        return renderable
+    if isinstance(renderable, Text):
+        return (
+            "text",
+            renderable.plain,
+            renderable.style,
+            tuple(renderable.spans),
+            renderable.justify,
+            renderable.overflow,
+            renderable.no_wrap,
+            renderable.end,
+        )
+    if isinstance(renderable, Table):
+        return (
+            "table",
+            renderable.expand,
+            renderable.width,
+            renderable.padding,
+            tuple((row.style, row.end_section) for row in renderable.rows),
+            tuple(
+                (
+                    column.width,
+                    column.min_width,
+                    column.max_width,
+                    column.ratio,
+                    column.justify,
+                    column.vertical,
+                    column.style,
+                    column.no_wrap,
+                    column.overflow,
+                    tuple(render_key(cell) for cell in column.cells),
+                )
+                for column in renderable.columns
+            ),
+        )
+    if isinstance(renderable, Align):
+        return (
+            "align",
+            renderable.align,
+            renderable.vertical,
+            renderable.width,
+            renderable.height,
+            renderable.pad,
+            renderable.style,
+            render_key(renderable.renderable),
+        )
+    if isinstance(renderable, Group):
+        return ("group", renderable.fit, tuple(render_key(item) for item in renderable.renderables))
+    return object()
+
+
 class DitherCard(Widget):
     """Bordered card with a faint terminal-native texture beneath its content.
 
@@ -57,7 +116,9 @@ class DitherCard(Widget):
     def __init__(self, content: RenderableType = "", *, texture_colour: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._content = content
+        self._content_key: Any = object()
         self._texture_colour = texture_colour
+        self._texture_cache: tuple[tuple[int, int, str], Text] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(self._content, classes="card-content")
@@ -65,7 +126,19 @@ class DitherCard(Widget):
     def update(self, content: RenderableType, *, layout: bool = True) -> None:
         self._content = content
         if self.is_mounted:
-            self.query_one(".card-content", Static).update(content)
+            self.query_one(".card-content", Static).update(content, layout=layout)
+
+    def update_if_changed(self, content: RenderableType) -> None:
+        """Repaint only when the card's cells would actually change.
+
+        The card's size comes from the CSS grid, never from its content, so a
+        content change needs a repaint of this card only, not a screen layout.
+        """
+        key = render_key(content)
+        if key == self._content_key:
+            return
+        self._content_key = key
+        self.update(content, layout=False)
 
     def set_texture_colour(self, colour: str) -> None:
         if colour != self._texture_colour:
@@ -75,6 +148,14 @@ class DitherCard(Widget):
     def render(self) -> RenderableType:
         width = max(1, self.content_size.width)
         height = max(1, self.content_size.height)
+        cache_key = (width, height, self._texture_colour)
+        if self._texture_cache is not None and self._texture_cache[0] == cache_key:
+            return self._texture_cache[1]
+        texture = self._build_texture(width, height)
+        self._texture_cache = (cache_key, texture)
+        return texture
+
+    def _build_texture(self, width: int, height: int) -> Text:
         texture = Text()
         # Intentionally sparse and ASCII-only. One small dot per roughly 79
         # cells is enough to test material depth without becoming visual grit.
@@ -190,6 +271,14 @@ class FoxDashApp(App[None]):
             "feedback-power",
             "feedback-power-urgent",
         )
+        # Last values pushed into Textual. Textual's border and border-title
+        # setters, and Static.update(), repaint unconditionally (the latter
+        # with a full screen layout), so the 10 Hz tick only touches what
+        # actually changed. This is what keeps the Pi Zero's main thread idle.
+        self._static_keys: dict[str, Any] = {}
+        self._card_style_keys: dict[str, tuple[str, str, str, str, bool]] = {}
+        self._dpf_style_key: tuple[str, str] | None = None
+        self._border_titles: dict[str, str] = {}
         self._ui_brightness = self._clamp_brightness(ui_brightness)
         self._ambient_palette = (
             AmbientPaletteController(initial_percent=self._ui_brightness)
@@ -350,6 +439,10 @@ class FoxDashApp(App[None]):
             background = self._palette_colour(card_name, "background")
             title = self._palette_colour(card_name, "title")
             texture = self._palette_colour(card_name, "texture")
+        style_key = (border, background, title, texture, alert)
+        if self._card_style_keys.get(card_name) == style_key:
+            return
+        self._card_style_keys[card_name] = style_key
         card.styles.border = ("round", Color.parse(border))
         card.styles.background = Color.parse(background)
         card.styles.border_title_color = Color.parse(title)
@@ -425,30 +518,43 @@ class FoxDashApp(App[None]):
         if trend_key != self._last_trend_key:
             self.trends.update(snap)
             self._last_trend_key = trend_key
-        self.query_one("#status_bar", Static).update(self.render_status(snap, power))
+        self._update_static(self.query_one("#status_bar", Static), self.render_status(snap, power))
         feedback = self.query_one("#feedback_bar", Static)
         if power is not None and power.state is not PowerState.NORMAL:
             # The power banner borrows the driving-cue slot: same size, same
             # edge-lit treatment, no layout shift. When power returns the very
             # next tick renders the normal cue again; nothing else is touched.
-            feedback.update(self.render_power_banner(power, width=feedback.content_size.width))
+            self._update_static(feedback, self.render_power_banner(power, width=feedback.content_size.width))
             self._set_feedback_class(feedback, self._power_banner_class(power))
         else:
-            feedback.update(self.render_feedback(snap))
+            self._update_static(feedback, self.render_feedback(snap))
             self._apply_feedback_style(feedback, snap)
         dpf = self.query_one("#dpf_bar", Static)
-        dpf.update(self.render_dpf(snap))
+        self._update_static(dpf, self.render_dpf(snap))
         self._apply_dpf_temperature_style(dpf, snap.fapTemp)
         self._update_score_border_titles(snap)
-        self.query_one("#efficiency_card", DitherCard).update(self.render_efficiency(snap))
-        self.query_one("#mood_card", DitherCard).update(self.render_mood(snap))
-        self.query_one("#driver_card", DitherCard).update(self.render_driver(snap))
-        self.query_one("#thermal_system_card", DitherCard).update(self.render_thermal_system(snap))
-        self.query_one("#pressure_card", DitherCard).update(self.render_pressure(snap))
-        self.query_one("#flow_card", DitherCard).update(self.render_flow_exhaust(snap))
+        self.query_one("#efficiency_card", DitherCard).update_if_changed(self.render_efficiency(snap))
+        self.query_one("#mood_card", DitherCard).update_if_changed(self.render_mood(snap))
+        self.query_one("#driver_card", DitherCard).update_if_changed(self.render_driver(snap))
+        self.query_one("#thermal_system_card", DitherCard).update_if_changed(self.render_thermal_system(snap))
+        self.query_one("#pressure_card", DitherCard).update_if_changed(self.render_pressure(snap))
+        self.query_one("#flow_card", DitherCard).update_if_changed(self.render_flow_exhaust(snap))
         self._apply_card_alert_styles(snap)
         if self.show_debug:
-            self.query_one("#debug_card", Static).update(self.render_debug(snap, state.environment, power))
+            self._update_static(self.query_one("#debug_card", Static), self.render_debug(snap, state.environment, power))
+
+    def _update_static(self, widget: Static, content: RenderableType) -> None:
+        """Static.update() without the repaint when nothing visible changed.
+
+        Every dashboard Static has a CSS-fixed height, so content changes never
+        need the full screen layout that Static.update() performs by default.
+        """
+        key = render_key(content)
+        widget_id = widget.id or str(id(widget))
+        if self._static_keys.get(widget_id) == key:
+            return
+        self._static_keys[widget_id] = key
+        widget.update(content, layout=False)
 
     def _animated_value(self, key: str, target: Any) -> Any:
         if not isinstance(target, (int, float)):
@@ -629,6 +735,9 @@ class FoxDashApp(App[None]):
         # red end of its own thermal scale gets the same quiet breathing edge.
         if isinstance(visual, (int, float)) and visual >= 500:
             border_colour = self._pulse_colour("#852026", "#ff645b", period=2.2)
+        if self._dpf_style_key == (border_colour, background_colour):
+            return
+        self._dpf_style_key = (border_colour, background_colour)
         widget.styles.border = ("round", Color.parse(border_colour))
         widget.styles.background = Color.parse(background_colour)
 
@@ -649,8 +758,15 @@ class FoxDashApp(App[None]):
             battery_v=s.batteryV,
         )
         _face, mood_label = self.ui_text.mood(mood_key)
-        self.query_one("#efficiency_card", DitherCard).border_title = f" {self.ui_text.efficiency_label(efficiency_key)} "
-        self.query_one("#mood_card", DitherCard).border_title = f" {mood_label} "
+        self._set_border_title("efficiency_card", f" {self.ui_text.efficiency_label(efficiency_key)} ")
+        self._set_border_title("mood_card", f" {mood_label} ")
+
+    def _set_border_title(self, card_name: str, title: str) -> None:
+        # Textual repaints the whole card on every border_title assignment.
+        if self._border_titles.get(card_name) == title:
+            return
+        self._border_titles[card_name] = title
+        self.query_one(f"#{card_name}", DitherCard).border_title = title
 
     def _feedback(self, s: TelemetrySnapshot) -> tuple[str, str]:
         """Choose the one driver-facing cue from the shared interpretation.
