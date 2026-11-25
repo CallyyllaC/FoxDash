@@ -151,7 +151,12 @@ conceals startup without lengthening it: the splash adds no measurable time,
 and dropping the desktop makes FoxDash start about 2 s sooner.
 
 The FoxDash main thread already used about one core at `--refresh-hz 10`
-before this change; it is being profiled separately.
+before this change. A separate render-path fix in `foxdash_lite/app.py`,
+deployed after these measurements under the kiosk launcher, took the main
+thread from 93.8% to 18.3% of a core (whole python 102% to 27%, system 33% to
+21% busy across 4 cores; car off). lxterminal rose from 27% to 49% because
+the dashboard now actually reaches 10 frames a second. That fix is tracked on
+its own branch.
 
 ## Validation (2026-11-24, development Pi)
 
